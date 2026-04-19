@@ -5,17 +5,16 @@
   <version>0.0.0</version>
   <description>
     Vendor-specific adapters that wrap Nebula drivers behind the
-    nebuladec_core AnyDecoder interface.
+    nebuladec_core AnyDecoder interface, plus the top-level Decoder
+    facade that routes packets to the right adapter.
   </description>
   <maintainer email="opensource@tier4.jp">TIER IV</maintainer>
   <license>Apache 2</license>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>nebula_hesai_decoders</depend>
-  <depend>nebula_robosense_decoders</depend>
+  <depend>nebula_seyond_common</depend>
   <depend>nebula_seyond_decoders</depend>
-  <depend>nebula_velodyne_decoders</depend>
   <depend>nebuladec_core</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

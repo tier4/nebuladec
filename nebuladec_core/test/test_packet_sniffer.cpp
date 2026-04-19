@@ -1,7 +1,6 @@
 // Copyright 2026 TIER IV, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "nebuladec_core/decoder.hpp"
 #include "nebuladec_core/packet_sniffer.hpp"
 
 #include <gtest/gtest.h>
@@ -264,12 +263,6 @@ TEST(PacketSniffer, SeyondRejectsShortPacket)
   PacketSniffer sniffer;
   std::vector<std::uint8_t> pkt{0x6A, 0x17};  // magic only, no room for header
   EXPECT_FALSE(sniffer.identify(pkt).has_value());
-}
-
-TEST(Decoder, ConstructsWithoutCrashing)
-{
-  Decoder decoder;
-  EXPECT_FALSE(decoder.identity().has_value());
 }
 
 }  // namespace nebuladec

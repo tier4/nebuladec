@@ -15,7 +15,8 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
-  src/placeholder.cpp
+  src/decoder.cpp
+  src/seyond_adapter.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -25,6 +26,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_decoder test/test_decoder.cpp)
+  target_link_libraries(test_decoder ${PROJECT_NAME})
 endif()
 
 ament_auto_package()
