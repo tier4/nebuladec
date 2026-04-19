@@ -3,6 +3,8 @@
 
 #include "nebuladec_core/packet_sniffer.hpp"
 
+#include <string>
+
 namespace nebuladec
 {
 

@@ -3,6 +3,10 @@
 
 #include "nebuladec_core/decoder.hpp"
 
+#include <memory>
+#include <optional>
+#include <vector>
+
 namespace nebuladec
 {
 
@@ -13,7 +17,9 @@ struct Decoder::Impl
   std::unique_ptr<AnyDecoder> adapter;
 };
 
-Decoder::Decoder() : impl_(std::make_unique<Impl>()) {}
+Decoder::Decoder() : impl_(std::make_unique<Impl>())
+{
+}
 Decoder::~Decoder() = default;
 Decoder::Decoder(Decoder &&) noexcept = default;
 Decoder & Decoder::operator=(Decoder &&) noexcept = default;
