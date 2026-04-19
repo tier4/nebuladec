@@ -1,5 +1,5 @@
 {
   "ignorePaths": [".cppcheck_suppressions"],
   "ignoreRegExpList": [],
-  "words": ["nebuladec", "msop", "difop"]
+  "words": ["difop", "msop", "nebuladec", "pandarqt", "pandarxt"]
 }
