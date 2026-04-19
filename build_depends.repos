@@ -1,1 +1,13 @@
 repositories:
+  dependencies/nebula:
+    type: git
+    url: git@github.com:tier4/nebula.git
+    version: fc6e0df79e1985ab06612a29ed7c4ec1271a6067  # feat/seyond
+  dependencies/nebula/sync_tooling_msgs:
+    type: git
+    url: https://github.com/tier4/sync_tooling_msgs.git
+    version: a1d519062e76b5574c09a2a0a2f355ecaf102675  # main
+  dependencies/nebula/agnocast:
+    type: git
+    url: https://github.com/tier4/agnocast
+    version: 385761fe8ba130d002d5924eedee47634536e26e  # 2.3.1

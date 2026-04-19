@@ -13,3 +13,9 @@ log/
 
 # Python
 *.pyc
+
+# Dependencies
+/src/dependencies/
+
+# Node
+node_modules/
