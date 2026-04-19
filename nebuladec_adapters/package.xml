@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nebuladec_adapters</name>
+  <version>0.0.0</version>
+  <description>
+    Vendor-specific adapters that wrap Nebula drivers behind the
+    nebuladec_core AnyDecoder interface.
+  </description>
+  <maintainer email="opensource@tier4.jp">TIER IV</maintainer>
+  <license>Apache 2</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <depend>nebula_hesai_decoders</depend>
+  <depend>nebula_robosense_decoders</depend>
+  <depend>nebula_seyond_decoders</depend>
+  <depend>nebula_velodyne_decoders</depend>
+  <depend>nebuladec_core</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
