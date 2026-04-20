@@ -78,17 +78,11 @@ TEST(MakeAdapter, ReturnsSeyondAdapterForSeyondIdentity)
   EXPECT_EQ(adapter->identity().vendor, Vendor::SEYOND);
 }
 
-TEST(MakeAdapter, ReturnsNullForUnsupportedVendors)
+TEST(MakeAdapter, ReturnsNullForUnknownVendor)
 {
-  // Hesai and Velodyne are handled separately (they need a specific
-  // model to be ready); see their dedicated adapter tests. M6 covers
-  // Robosense.
-  for (auto v : {Vendor::ROBOSENSE, Vendor::UNKNOWN}) {
-    Identity id;
-    id.vendor = v;
-    auto adapter = make_adapter(id);
-    EXPECT_EQ(adapter, nullptr) << "unexpected adapter for vendor " << to_string(v);
-  }
+  Identity id;
+  id.vendor = Vendor::UNKNOWN;
+  EXPECT_EQ(make_adapter(id), nullptr);
 }
 
 TEST(SeyondAdapter, FeedEmptyPacketReturnsNullopt)

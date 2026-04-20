@@ -4,6 +4,7 @@
 #include "nebuladec_adapters/decoder.hpp"
 
 #include "nebuladec_adapters/hesai_adapter.hpp"
+#include "nebuladec_adapters/robosense_adapter.hpp"
 #include "nebuladec_adapters/seyond_adapter.hpp"
 #include "nebuladec_adapters/velodyne_adapter.hpp"
 
@@ -40,9 +41,12 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
       return adapter;
     }
     case Vendor::ROBOSENSE:
+      // Robosense needs DIFOP to populate its calibration, so the
+      // adapter is not yet is_ready() at construction. Returning it
+      // anyway lets Decoder::feed_info() drive the initialisation.
+      return std::make_unique<adapters::RobosenseAdapter>(identity);
     case Vendor::UNKNOWN:
     default:
-      // Robosense lands in M6.
       return nullptr;
   }
 }
