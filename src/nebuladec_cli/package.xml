@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nebuladec_cli</name>
+  <version>0.0.0</version>
+  <description>
+    Command-line interface for nebuladec: `nebuladec inspect` reports a
+    packet bag's vendor/model and counts, `nebuladec convert` decodes it
+    into a sibling PointCloud2 bag using the same storage plugin.
+  </description>
+  <maintainer email="opensource@tier4.jp">TIER IV</maintainer>
+  <license>Apache 2</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <depend>nebuladec_bag</depend>
+  <depend>nebuladec_core</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
