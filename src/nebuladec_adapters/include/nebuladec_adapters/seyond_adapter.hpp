@@ -49,7 +49,7 @@ public:
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
 
-  Identity identity() const override {return identity_;}
+  Identity identity() const override { return identity_; }
 
 private:
   Identity identity_;

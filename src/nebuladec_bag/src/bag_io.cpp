@@ -112,7 +112,7 @@ InputSpec detect_input(const std::string & path)
     const auto sid = storage_id_from_extension(p);
     if (sid.empty()) {
       throw std::invalid_argument(
-              "unknown storage extension (expected .mcap or .db3): " + p.string());
+        "unknown storage extension (expected .mcap or .db3): " + p.string());
     }
     return InputSpec{p.string(), sid, false};
   }
@@ -255,12 +255,12 @@ ConvertResult convert(const ConvertOptions & options)
   PipelineState state;
 
   auto sink = [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
-      if (!cloud || cloud->empty()) {
-        return;
-      }
-      const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), options.frame_id);
-      writer.write(pc_msg, options.output_topic, rclcpp::Time(stamp_ns));
-    };
+    if (!cloud || cloud->empty()) {
+      return;
+    }
+    const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), options.frame_id);
+    writer.write(pc_msg, options.output_topic, rclcpp::Time(stamp_ns));
+  };
 
   process_bag(reader, sel, state, sink);
 

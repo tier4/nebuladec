@@ -65,8 +65,7 @@ std::shared_ptr<RobosenseSensorConfiguration> make_offline_config(
 
 }  // namespace
 
-RobosenseAdapter::RobosenseAdapter(const Identity & identity)
-: identity_(identity)
+RobosenseAdapter::RobosenseAdapter(const Identity & identity) : identity_(identity)
 {
   if (identity.vendor != Vendor::ROBOSENSE || identity.model == SensorModel::UNKNOWN) {
     return;

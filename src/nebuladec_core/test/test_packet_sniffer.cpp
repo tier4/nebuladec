@@ -193,7 +193,7 @@ TEST(PacketSniffer, HesaiPandarAT128)
 TEST(PacketSniffer, HesaiPandar128E3X)
 {
   PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/ 3);
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/3);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::HESAI);
@@ -203,7 +203,7 @@ TEST(PacketSniffer, HesaiPandar128E3X)
 TEST(PacketSniffer, HesaiPandar128E4X)
 {
   PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/ 4);
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/4);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::HESAI);
@@ -213,7 +213,7 @@ TEST(PacketSniffer, HesaiPandar128E4X)
 TEST(PacketSniffer, HesaiPandar128UnknownProtocolDefaultsToE4X)
 {
   PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/ 0);
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/0);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::HESAI);
@@ -313,7 +313,7 @@ TEST(PacketSniffer, RobosenseHeliosFamily)
 TEST(PacketSniffer, SeyondFalconK1)
 {
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 0);
+  auto pkt = make_seyond_packet(/*lidar_type=*/0);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::SEYOND);
@@ -324,7 +324,7 @@ TEST(PacketSniffer, SeyondFalconK1)
 TEST(PacketSniffer, SeyondRobinW)
 {
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 1);
+  auto pkt = make_seyond_packet(/*lidar_type=*/1);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   ASSERT_TRUE(id->seyond_model.has_value());
@@ -334,7 +334,7 @@ TEST(PacketSniffer, SeyondRobinW)
 TEST(PacketSniffer, SeyondFalconK2)
 {
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 3);
+  auto pkt = make_seyond_packet(/*lidar_type=*/3);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   ASSERT_TRUE(id->seyond_model.has_value());
@@ -344,7 +344,7 @@ TEST(PacketSniffer, SeyondFalconK2)
 TEST(PacketSniffer, SeyondFalconIII)
 {
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 4);
+  auto pkt = make_seyond_packet(/*lidar_type=*/4);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   ASSERT_TRUE(id->seyond_model.has_value());
@@ -354,7 +354,7 @@ TEST(PacketSniffer, SeyondFalconIII)
 TEST(PacketSniffer, SeyondRobinE1X)
 {
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 5);  // RobinELITE
+  auto pkt = make_seyond_packet(/*lidar_type=*/5);  // RobinELITE
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   ASSERT_TRUE(id->seyond_model.has_value());
@@ -364,7 +364,7 @@ TEST(PacketSniffer, SeyondRobinE1X)
 TEST(PacketSniffer, SeyondHummingbird)
 {
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 7);
+  auto pkt = make_seyond_packet(/*lidar_type=*/7);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   ASSERT_TRUE(id->seyond_model.has_value());
@@ -376,7 +376,7 @@ TEST(PacketSniffer, SeyondUnmappedLidarType)
   // RobinE2X (6), RobinE (2), RobinE2 (8) are not in Nebula's
   // SeyondSensorModel; vendor is still SEYOND but seyond_model stays empty.
   PacketSniffer sniffer;
-  auto pkt = make_seyond_packet(/*lidar_type=*/ 6);
+  auto pkt = make_seyond_packet(/*lidar_type=*/6);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::SEYOND);

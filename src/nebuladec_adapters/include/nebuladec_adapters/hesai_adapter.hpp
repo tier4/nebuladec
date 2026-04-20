@@ -49,12 +49,12 @@ public:
 
   /// True iff the adapter fully initialised (identified model with a
   /// loadable calibration). A false value makes feed() a no-op.
-  [[nodiscard]] bool is_ready() const {return driver_ != nullptr;}
+  [[nodiscard]] bool is_ready() const { return driver_ != nullptr; }
 
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
 
-  Identity identity() const override {return identity_;}
+  Identity identity() const override { return identity_; }
 
 private:
   Identity identity_;

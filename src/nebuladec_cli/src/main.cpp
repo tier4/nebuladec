@@ -43,24 +43,24 @@ constexpr int k_exit_runtime = 70;
 int print_usage(std::ostream & out)
 {
   out << "usage: nebuladec <subcommand> [options]\n"
-    "\n"
-    "subcommands:\n"
-    "  inspect <path>\n"
-    "      Report vendor/model, packet counts, and scan count for a bag.\n"
-    "\n"
-    "  convert <input> -o <output> [options]\n"
-    "      Decode packets and write a sibling PointCloud2 bag.\n"
-    "\n"
-    "convert options:\n"
-    "  -o, --output <path>          Output bag path (required).\n"
-    "      --output-topic <name>    PointCloud2 topic to write (default "
-    "/nebuladec/pointcloud).\n"
-    "      --packets-topic <name>   Override input packet topic auto-detection.\n"
-    "      --info-topic <name>      Override Robosense info topic auto-detection.\n"
-    "      --frame-id <name>        Frame id on written PointCloud2 (default lidar).\n"
-    "\n"
-    "The output bag uses the same storage plugin (mcap/sqlite3) and\n"
-    "layout (file vs metadata directory) as the input.\n";
+         "\n"
+         "subcommands:\n"
+         "  inspect <path>\n"
+         "      Report vendor/model, packet counts, and scan count for a bag.\n"
+         "\n"
+         "  convert <input> -o <output> [options]\n"
+         "      Decode packets and write a sibling PointCloud2 bag.\n"
+         "\n"
+         "convert options:\n"
+         "  -o, --output <path>          Output bag path (required).\n"
+         "      --output-topic <name>    PointCloud2 topic to write (default "
+         "/nebuladec/pointcloud).\n"
+         "      --packets-topic <name>   Override input packet topic auto-detection.\n"
+         "      --info-topic <name>      Override Robosense info topic auto-detection.\n"
+         "      --frame-id <name>        Frame id on written PointCloud2 (default lidar).\n"
+         "\n"
+         "The output bag uses the same storage plugin (mcap/sqlite3) and\n"
+         "layout (file vs metadata directory) as the input.\n";
   return k_exit_usage;
 }
 
@@ -110,33 +110,43 @@ int cmd_convert(const std::vector<std::string> & argv)
   for (std::size_t i = 0; i < argv.size(); ++i) {
     const auto & arg = argv[i];
     auto next = [&](const std::string & name) -> std::optional<std::string> {
-        if (i + 1 >= argv.size()) {
-          std::cerr << "missing value for " << name << "\n";
-          return std::nullopt;
-        }
-        return argv[++i];
-      };
+      if (i + 1 >= argv.size()) {
+        std::cerr << "missing value for " << name << "\n";
+        return std::nullopt;
+      }
+      return argv[++i];
+    };
 
     if (arg == "-o" || arg == "--output") {
       auto v = next(arg);
-      if (!v) {return print_usage(std::cerr);}
+      if (!v) {
+        return print_usage(std::cerr);
+      }
       options.output_path = *v;
       have_output = true;
     } else if (arg == "--output-topic") {
       auto v = next(arg);
-      if (!v) {return print_usage(std::cerr);}
+      if (!v) {
+        return print_usage(std::cerr);
+      }
       options.output_topic = *v;
     } else if (arg == "--packets-topic") {
       auto v = next(arg);
-      if (!v) {return print_usage(std::cerr);}
+      if (!v) {
+        return print_usage(std::cerr);
+      }
       options.packets_topic = *v;
     } else if (arg == "--info-topic") {
       auto v = next(arg);
-      if (!v) {return print_usage(std::cerr);}
+      if (!v) {
+        return print_usage(std::cerr);
+      }
       options.info_topic = *v;
     } else if (arg == "--frame-id") {
       auto v = next(arg);
-      if (!v) {return print_usage(std::cerr);}
+      if (!v) {
+        return print_usage(std::cerr);
+      }
       options.frame_id = *v;
     } else if (arg == "-h" || arg == "--help") {
       print_usage(std::cout);

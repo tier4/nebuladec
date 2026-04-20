@@ -55,8 +55,7 @@ nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
   // the stream uses a variant Nebula does not model (e.g. RobinE2X).
   if (
     identity.seyond_model &&
-    *identity.seyond_model != nebula::drivers::SeyondSensorModel::UNKNOWN)
-  {
+    *identity.seyond_model != nebula::drivers::SeyondSensorModel::UNKNOWN) {
     return *identity.seyond_model;
   }
   return nebula::drivers::SeyondSensorModel::FALCON_K;
@@ -64,8 +63,7 @@ nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
 
 }  // namespace
 
-SeyondAdapter::SeyondAdapter(const Identity & identity)
-: identity_(identity)
+SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
 {
   nebula::drivers::SeyondSensorConfiguration config;
   config.sensor_model = pick_seyond_model(identity);
@@ -78,11 +76,11 @@ SeyondAdapter::SeyondAdapter(const Identity & identity)
   config.return_mode = nebula::drivers::ReturnMode::STRONGEST;
 
   auto callback = [this](
-    nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
-      if (cloud && !cloud->empty()) {
-        ready_clouds_.push_back(std::move(cloud));
-      }
-    };
+                    nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
+    if (cloud && !cloud->empty()) {
+      ready_clouds_.push_back(std::move(cloud));
+    }
+  };
 
   decoder_ = std::make_unique<nebula::drivers::SeyondDecoder>(
     config, callback, nebula::drivers::SeyondCalibrationData{});

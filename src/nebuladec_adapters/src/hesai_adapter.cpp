@@ -155,8 +155,7 @@ std::shared_ptr<const HesaiSensorConfiguration> make_offline_config(
 
 }  // namespace
 
-HesaiAdapter::HesaiAdapter(const Identity & identity)
-: identity_(identity)
+HesaiAdapter::HesaiAdapter(const Identity & identity) : identity_(identity)
 {
   if (identity.model == SensorModel::UNKNOWN) {
     return;  // Not enough to pick a decoder/calibration; is_ready() stays false.
@@ -170,11 +169,11 @@ HesaiAdapter::HesaiAdapter(const Identity & identity)
   auto config = make_offline_config(identity.model, identity.return_mode);
 
   auto callback = [this](
-    const nebula::drivers::NebulaPointCloudPtr & cloud, double /*timestamp_s*/) {
-      if (cloud && !cloud->empty()) {
-        ready_clouds_.push_back(cloud);
-      }
-    };
+                    const nebula::drivers::NebulaPointCloudPtr & cloud, double /*timestamp_s*/) {
+    if (cloud && !cloud->empty()) {
+      ready_clouds_.push_back(cloud);
+    }
+  };
 
   try {
     auto logger = std::make_shared<nebula::drivers::loggers::ConsoleLogger>("nebuladec.hesai");

@@ -38,19 +38,19 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
     case Vendor::SEYOND:
       return std::make_unique<adapters::SeyondAdapter>(identity);
     case Vendor::HESAI: {
-        auto adapter = std::make_unique<adapters::HesaiAdapter>(identity);
-        if (!adapter->is_ready()) {
-          return nullptr;
-        }
-        return adapter;
+      auto adapter = std::make_unique<adapters::HesaiAdapter>(identity);
+      if (!adapter->is_ready()) {
+        return nullptr;
       }
+      return adapter;
+    }
     case Vendor::VELODYNE: {
-        auto adapter = std::make_unique<adapters::VelodyneAdapter>(identity);
-        if (!adapter->is_ready()) {
-          return nullptr;
-        }
-        return adapter;
+      auto adapter = std::make_unique<adapters::VelodyneAdapter>(identity);
+      if (!adapter->is_ready()) {
+        return nullptr;
       }
+      return adapter;
+    }
     case Vendor::ROBOSENSE:
       // Robosense needs DIFOP to populate its calibration, so the
       // adapter is not yet is_ready() at construction. Returning it
@@ -74,8 +74,7 @@ struct Decoder::Impl
   std::size_t min_points{1024};
 };
 
-Decoder::Decoder()
-: impl_(std::make_unique<Impl>())
+Decoder::Decoder() : impl_(std::make_unique<Impl>())
 {
 }
 Decoder::~Decoder() = default;

@@ -112,8 +112,7 @@ std::shared_ptr<const VelodyneSensorConfiguration> make_offline_config(
 
 }  // namespace
 
-VelodyneAdapter::VelodyneAdapter(const Identity & identity)
-: identity_(identity)
+VelodyneAdapter::VelodyneAdapter(const Identity & identity) : identity_(identity)
 {
   if (identity.model == SensorModel::UNKNOWN) {
     return;

@@ -51,14 +51,14 @@ public:
   RobosenseAdapter & operator=(const RobosenseAdapter &) = delete;
 
   /// True once DIFOP has been parsed and the scan driver is constructed.
-  [[nodiscard]] bool is_ready() const {return driver_ != nullptr;}
+  [[nodiscard]] bool is_ready() const { return driver_ != nullptr; }
 
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
 
   void feed_info(const std::vector<std::uint8_t> & packet) override;
 
-  Identity identity() const override {return identity_;}
+  Identity identity() const override { return identity_; }
 
 private:
   Identity identity_;

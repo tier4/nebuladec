@@ -25,8 +25,7 @@
 namespace nebuladec
 {
 
-enum class Vendor : std::uint8_t
-{
+enum class Vendor : std::uint8_t {
   UNKNOWN = 0,
   HESAI,
   VELODYNE,

@@ -46,7 +46,7 @@ std::int64_t nsec(const builtin_interfaces::msg::Time & t)
   return static_cast<std::int64_t>(t.sec) * 1'000'000'000LL + static_cast<std::int64_t>(t.nanosec);
 }
 
-template<class Msg>
+template <class Msg>
 Msg deserialize(const rclcpp::SerializedMessage & serialized)
 {
   Msg out;
