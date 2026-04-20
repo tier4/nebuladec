@@ -3,6 +3,7 @@
 
 #include "nebuladec_adapters/decoder.hpp"
 
+#include "nebuladec_adapters/hesai_adapter.hpp"
 #include "nebuladec_adapters/seyond_adapter.hpp"
 
 #include <nebuladec_core/any_decoder.hpp>
@@ -23,14 +24,18 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
   switch (identity.vendor) {
     case Vendor::SEYOND:
       return std::make_unique<adapters::SeyondAdapter>(identity);
-    case Vendor::HESAI:
+    case Vendor::HESAI: {
+      auto adapter = std::make_unique<adapters::HesaiAdapter>(identity);
+      if (!adapter->is_ready()) {
+        return nullptr;
+      }
+      return adapter;
+    }
     case Vendor::VELODYNE:
     case Vendor::ROBOSENSE:
     case Vendor::UNKNOWN:
     default:
-      // Vendor support lands in later milestones (M4 Hesai, M5 Velodyne,
-      // M6 Robosense). Returning nullptr lets the Decoder facade signal
-      // "detected but not yet decodable".
+      // Velodyne lands in M5; Robosense in M6.
       return nullptr;
   }
 }
@@ -42,7 +47,9 @@ struct Decoder::Impl
   std::unique_ptr<AnyDecoder> adapter;
 };
 
-Decoder::Decoder() : impl_(std::make_unique<Impl>()) {}
+Decoder::Decoder() : impl_(std::make_unique<Impl>())
+{
+}
 Decoder::~Decoder() = default;
 Decoder::Decoder(Decoder &&) noexcept = default;
 Decoder & Decoder::operator=(Decoder &&) noexcept = default;
