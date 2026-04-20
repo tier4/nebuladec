@@ -20,7 +20,7 @@
   <depend>robosense_msgs</depend>
   <depend>rosbag2_cpp</depend>
   <depend>rosbag2_storage</depend>
-  <depend>rosbag2_storage_mcap</depend>
+  <exec_depend>rosbag2_storage_mcap</exec_depend>
   <depend>sensor_msgs</depend>
   <depend>velodyne_msgs</depend>
 
