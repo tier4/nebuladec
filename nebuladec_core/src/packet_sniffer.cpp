@@ -65,11 +65,12 @@ bool has_robosense_short_msop_magic(const std::uint8_t * data, std::size_t size)
   return true;
 }
 
-// Map (laser_num, block_num) to a Hesai SensorModel. Returns UNKNOWN when
-// the pair is not uniquely identifying. Used only for Hesai packets whose
-// SOP has already matched.
+// Map (laser_num, block_num) to a Hesai SensorModel. For the 128-channel
+// family (QT128 / AT128 / 128 E3X / 128 E4X) the packet size and, for the
+// E3X/E4X split, the protocol major version disambiguate which model
+// produced the bytes.
 SensorModel hesai_model_from_header(
-  std::uint8_t laser_num, std::uint8_t block_num, std::uint8_t return_num)
+  std::uint8_t laser_num, std::uint8_t block_num, std::size_t size, std::uint8_t protocol_major)
 {
   if (laser_num == 40 && block_num == 10) {
     return SensorModel::HESAI_PANDAR40P;
@@ -90,10 +91,33 @@ SensorModel hesai_model_from_header(
     return SensorModel::HESAI_PANDARXT32M;
   }
   if (laser_num == 128 && block_num == 2) {
-    // QT128, AT128, 128E3X and 128E4X all share this header shape; a
-    // stricter discriminator (protocol version or packet size) is needed
-    // to pick one. M2 leaves the model unresolved for this family.
-    (void)return_num;
+    // Packet sizes are derived from the packed Nebula packet structs:
+    //   QT128    -> Header12B + BodyWithCrc<Block<Unit4B,128>,2> + FS + Tail
+    //   AT128    -> Header12B + Body<FineAzBlock<Unit4B,128>,2> + crc + Tail
+    //   128E3X/4X-> Header12B + BodyWithCrc<Block<Unit3B,128>,2> + FS + Tail
+    constexpr std::size_t k_qt128_size = 1095;
+    constexpr std::size_t k_at128_size = 1078;
+    constexpr std::size_t k_128e_size = 861;
+    if (size == k_qt128_size) {
+      return SensorModel::HESAI_PANDARQT128;
+    }
+    if (size == k_at128_size) {
+      return SensorModel::HESAI_PANDARAT128;
+    }
+    if (size == k_128e_size) {
+      // Pandar128 E3X and E4X share the struct layout; Hesai's public UDP
+      // protocol documents the major version as 3 for E3X and 4 for E4X.
+      if (protocol_major == 3) {
+        return SensorModel::HESAI_PANDAR128_E3X;
+      }
+      if (protocol_major == 4) {
+        return SensorModel::HESAI_PANDAR128_E4X;
+      }
+      // Default to the newer variant when the version byte is missing
+      // or unexpected; decoders for the two are interchangeable at the
+      // struct level.
+      return SensorModel::HESAI_PANDAR128_E4X;
+    }
     return SensorModel::UNKNOWN;
   }
   return SensorModel::UNKNOWN;
@@ -186,6 +210,7 @@ std::optional<Identity> PacketSniffer::identify(const std::uint8_t * data, std::
 
   // Hesai — SOP 0xEEFF with variable size; Header12B starts at offset 0.
   if (size >= 12 && has_hesai_sop(data, size)) {
+    const std::uint8_t protocol_major = data[2];
     const std::uint8_t laser_num = data[6];
     const std::uint8_t block_num = data[7];
     const std::uint8_t return_num = data[10];
@@ -195,7 +220,7 @@ std::optional<Identity> PacketSniffer::identify(const std::uint8_t * data, std::
     }
     Identity id;
     id.vendor = Vendor::HESAI;
-    id.model = hesai_model_from_header(laser_num, block_num, return_num);
+    id.model = hesai_model_from_header(laser_num, block_num, size, protocol_major);
     id.return_mode = hesai_return_mode_from_byte(return_num);
     id.confidence = id.model == SensorModel::UNKNOWN ? 0.7F : 0.9F;
     return id;

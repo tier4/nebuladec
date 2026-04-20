@@ -20,11 +20,13 @@ using nebula::drivers::SensorModel;
 // Header12B layout: sop(2), proto_major(1), proto_minor(1), reserved(2),
 // laser_num(1), block_num(1), reserved(1), dis_unit(1), return_num(1), flags(1).
 std::vector<std::uint8_t> make_hesai_packet(
-  std::uint8_t laser_num, std::uint8_t block_num, std::uint8_t return_num, std::size_t size)
+  std::uint8_t laser_num, std::uint8_t block_num, std::uint8_t return_num, std::size_t size,
+  std::uint8_t protocol_major = 0)
 {
   std::vector<std::uint8_t> pkt(size, 0);
   pkt[0] = 0xFF;
   pkt[1] = 0xEE;
+  pkt[2] = protocol_major;
   pkt[6] = laser_num;
   pkt[7] = block_num;
   pkt[10] = return_num;
@@ -157,16 +159,64 @@ TEST(PacketSniffer, HesaiPandarQT64)
   EXPECT_EQ(id->model, SensorModel::HESAI_PANDARQT64);
 }
 
-TEST(PacketSniffer, HesaiPandar128Family)
+TEST(PacketSniffer, HesaiPandarQT128)
 {
-  // (laser_num=128, block_num=2) is shared by QT128/AT128/128E3X/128E4X.
-  // The sniffer should at minimum identify this as Hesai; model may be
-  // flagged as UNKNOWN or disambiguated via size/protocol version.
   PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 893);
+  auto pkt = make_hesai_packet(128, 2, 0x37, 1095);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::HESAI_PANDARQT128);
+}
+
+TEST(PacketSniffer, HesaiPandarAT128)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_hesai_packet(128, 2, 0x37, 1078);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::HESAI_PANDARAT128);
+}
+
+TEST(PacketSniffer, HesaiPandar128E3X)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/3);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::HESAI_PANDAR128_E3X);
+}
+
+TEST(PacketSniffer, HesaiPandar128E4X)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/4);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::HESAI_PANDAR128_E4X);
+}
+
+TEST(PacketSniffer, HesaiPandar128UnknownProtocolDefaultsToE4X)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/0);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::HESAI_PANDAR128_E4X);
+}
+
+TEST(PacketSniffer, HesaiPandar128UnknownSizeStaysUnresolved)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_hesai_packet(128, 2, 0x37, 999);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::UNKNOWN);
 }
 
 TEST(PacketSniffer, VelodyneVLP16)
