@@ -4,8 +4,11 @@
     - source: .github/dependabot.yaml
     - source: .github/pull_request_template.md
     - source: .github/workflows/backport.yaml
-    - source: .github/workflows/build-and-test.yaml
-    - source: .github/workflows/build-and-test-differential.yaml
+    # build-and-test*.yaml intentionally excluded: we add a local rosdep
+    # override step before colcon-build to work around a missing
+    # `nlohmann_json` rosdep key in upstream nebula_seyond_common.
+    # - source: .github/workflows/build-and-test.yaml
+    # - source: .github/workflows/build-and-test-differential.yaml
     # pre-commit.yaml intentionally excluded: we run pre-commit as a pure
     # check (no autofix-push) so the upstream template's GitHub-App token
     # requirements do not apply. See .github/workflows/pre-commit.yaml.

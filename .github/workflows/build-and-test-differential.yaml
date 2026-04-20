@@ -60,6 +60,16 @@ jobs:
         id: get-modified-packages
         uses: autowarefoundation/autoware-github-actions/get-modified-packages@v1
 
+      - name: Register local rosdep overrides
+        # See .rosdep/local.yaml: works around an upstream Nebula typo
+        # (`<depend>nlohmann_json</depend>` in nebula_seyond_common) that
+        # has no rosdep mapping.
+        run: |
+          set -e
+          sudo cp .rosdep/local.yaml /etc/ros/rosdep/sources.list.d/00-nebuladec-overrides.yaml
+          echo "yaml file:///etc/ros/rosdep/sources.list.d/00-nebuladec-overrides.yaml" \
+            | sudo tee /etc/ros/rosdep/sources.list.d/00-nebuladec-overrides.list
+
       - name: Build
         if: ${{ steps.get-modified-packages.outputs.modified-packages != '' }}
         uses: autowarefoundation/autoware-github-actions/colcon-build@v1
@@ -67,6 +77,7 @@ jobs:
           rosdistro: ${{ matrix.rosdistro }}
           target-packages: ${{ steps.get-modified-packages.outputs.modified-packages }}
           build-depends-repos: ${{ matrix.build-depends-repos }}
+          cache-key-element: nebuladec-rosdep-override-v1
 
       - name: Test
         id: test
