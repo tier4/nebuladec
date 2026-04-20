@@ -60,6 +60,14 @@ public:
   /// sniffed. Empty until the first identifiable packet is seen.
   std::optional<Identity> identity() const;
 
+  /// Pre-commit the vendor before any packet is fed. Useful when the bag
+  /// layer already knows the vendor from the ROS 2 message type (e.g.
+  /// `pandar_msgs/PandarScan` unambiguously implies HESAI). When set, the
+  /// sniffer restricts itself to that vendor's model detector and will
+  /// never flip to a different vendor, so a stream of malformed packets
+  /// cannot be misclassified. Pass `Vendor::UNKNOWN` to clear.
+  void set_vendor_hint(Vendor vendor);
+
   /// Minimum number of points a scan must contain to be surfaced from
   /// feed(). Clouds with fewer points are silently dropped. Defaults to
   /// 1024, which filters the first, partial-revolution scan that

@@ -46,16 +46,19 @@ int print_usage(std::ostream & out)
          "\n"
          "subcommands:\n"
          "  inspect <path>\n"
-         "      Report vendor/model, packet counts, and scan count for a bag.\n"
+         "      Report vendor/model, packet counts, and scan counts for every\n"
+         "      packet topic found in the bag (LiDAR and Continental radar).\n"
          "\n"
          "  convert <input> -o <output> [options]\n"
-         "      Decode packets and write a sibling PointCloud2 bag.\n"
+         "      Decode packets from one LiDAR topic and write a sibling\n"
+         "      PointCloud2 bag. Pass --packets-topic when the bag has\n"
+         "      more than one packet-stream topic.\n"
          "\n"
          "convert options:\n"
          "  -o, --output <path>          Output bag path (required).\n"
          "      --output-topic <name>    PointCloud2 topic to write (default "
          "/nebuladec/pointcloud).\n"
-         "      --packets-topic <name>   Override input packet topic auto-detection.\n"
+         "      --packets-topic <name>   Pick the input packet topic explicitly.\n"
          "      --info-topic <name>      Override Robosense info topic auto-detection.\n"
          "      --frame-id <name>        Frame id on written PointCloud2 (default lidar).\n"
          "\n"
@@ -86,14 +89,24 @@ int cmd_inspect(const std::vector<std::string> & argv)
   }
   try {
     const auto summary = nebuladec::bag::inspect(argv[0]);
-    std::cout << "identity         : " << format_identity(summary.identity) << "\n";
-    std::cout << "packets topic    : " << summary.packets_topic << "\n";
-    if (!summary.info_topic.empty()) {
-      std::cout << "info topic       : " << summary.info_topic << "\n";
+    if (summary.topics.empty()) {
+      std::cout << "no Nebula packet topics found in bag\n";
+      return k_exit_ok;
     }
-    std::cout << "data packets     : " << summary.data_packets << "\n";
-    std::cout << "info packets     : " << summary.info_packets << "\n";
-    std::cout << "clouds produced  : " << summary.clouds_produced << "\n";
+    std::cout << "topics discovered: " << summary.topics.size() << "\n";
+    for (std::size_t i = 0; i < summary.topics.size(); ++i) {
+      const auto & t = summary.topics[i];
+      std::cout << "\n[" << (i + 1) << "/" << summary.topics.size() << "] " << t.topic << "\n";
+      std::cout << "  message type   : " << t.message_type << "\n";
+      std::cout << "  vendor (msg)   : " << nebuladec::to_string(t.vendor_by_message_type) << "\n";
+      std::cout << "  identity       : " << format_identity(t.identity) << "\n";
+      if (!t.info_topic.empty()) {
+        std::cout << "  info topic     : " << t.info_topic << "\n";
+      }
+      std::cout << "  data packets   : " << t.data_packets << "\n";
+      std::cout << "  info packets   : " << t.info_packets << "\n";
+      std::cout << "  clouds produced: " << t.clouds_produced << "\n";
+    }
     return k_exit_ok;
   } catch (const std::exception & e) {
     std::cerr << "inspect failed: " << e.what() << "\n";

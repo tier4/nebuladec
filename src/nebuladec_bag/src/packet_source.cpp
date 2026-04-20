@@ -176,4 +176,20 @@ bool is_info_type(const std::string & type_name)
   return type_name == k_robosense_info;
 }
 
+Vendor vendor_from_message_type(const std::string & type_name)
+{
+  if (type_name == k_pandar_scan) {
+    return Vendor::HESAI;
+  }
+  if (type_name == k_velodyne_scan) {
+    return Vendor::VELODYNE;
+  }
+  if (type_name == k_robosense_scan) {
+    return Vendor::ROBOSENSE;
+  }
+  // nebula_msgs/NebulaPackets is shared between Seyond LiDAR and
+  // Continental radar: only a packet-level sniff can decide.
+  return Vendor::UNKNOWN;
+}
+
 }  // namespace nebuladec::bag

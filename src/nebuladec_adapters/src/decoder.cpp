@@ -60,6 +60,10 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
         return nullptr;
       }
       return std::make_unique<adapters::RobosenseAdapter>(identity);
+    case Vendor::CONTINENTAL:
+      // Continental radar: identified, not decoded. nebuladec_adapters
+      // does not (yet) emit point clouds from ARS548 / SRR520 packets.
+      return nullptr;
     case Vendor::UNKNOWN:
     default:
       return nullptr;
@@ -71,6 +75,11 @@ struct Decoder::Impl
   PacketSniffer sniffer;
   std::optional<Identity> identity;
   std::unique_ptr<AnyDecoder> adapter;
+  Vendor vendor_hint{Vendor::UNKNOWN};
+  /// Set once the sniffer has returned a resolved identity so subsequent
+  /// packets skip the re-sniff path even when no adapter is available
+  /// (e.g. CONTINENTAL radar — identified, not decoded).
+  bool identity_locked{false};
   std::size_t min_points{1024};
 };
 
@@ -84,16 +93,31 @@ Decoder & Decoder::operator=(Decoder &&) noexcept = default;
 std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::feed(
   const std::vector<std::uint8_t> & packet, double stamp_sec)
 {
-  if (!impl_->adapter) {
-    auto sniffed = impl_->sniffer.identify(packet);
+  if (!impl_->adapter && !impl_->identity_locked) {
+    auto sniffed = impl_->sniffer.identify(packet, impl_->vendor_hint);
     if (!sniffed.has_value()) {
       return std::nullopt;
     }
     impl_->identity = sniffed;
     impl_->adapter = make_adapter(*sniffed);
+    // Lock the identity only once it carries useful information. With a
+    // vendor hint the sniffer always returns *something* (hint + UNKNOWN
+    // model) so the model-search would otherwise stop on the first
+    // packet even before the real model has been seen. Requiring either
+    // a ready adapter or a resolved model keeps the search alive for
+    // LiDAR while still terminating it for radar (vendor-only identity
+    // with no adapter to build).
+    const bool has_model =
+      sniffed->model != nebula::drivers::SensorModel::UNKNOWN || sniffed->seyond_model.has_value();
+    if (impl_->adapter || (sniffed->vendor == Vendor::CONTINENTAL) || has_model) {
+      impl_->identity_locked = true;
+    }
     if (!impl_->adapter) {
       return std::nullopt;
     }
+  }
+  if (!impl_->adapter) {
+    return std::nullopt;
   }
 
   auto cloud = impl_->adapter->feed(packet, stamp_sec);
@@ -113,6 +137,11 @@ void Decoder::feed_info(const std::vector<std::uint8_t> & packet)
 std::optional<Identity> Decoder::identity() const
 {
   return impl_->identity;
+}
+
+void Decoder::set_vendor_hint(Vendor vendor)
+{
+  impl_->vendor_hint = vendor;
 }
 
 void Decoder::set_min_points(std::size_t min_points)

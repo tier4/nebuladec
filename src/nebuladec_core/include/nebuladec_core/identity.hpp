@@ -31,6 +31,7 @@ enum class Vendor : std::uint8_t {
   VELODYNE,
   ROBOSENSE,
   SEYOND,
+  CONTINENTAL,
 };
 
 struct Identity
