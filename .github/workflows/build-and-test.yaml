@@ -19,6 +19,9 @@ jobs:
     if: ${{ github.event_name != 'push' || github.ref_name == github.event.repository.default_branch }}
     runs-on: ubuntu-22.04
     container: ${{ matrix.container }}
+    permissions:
+      contents: read
+      actions: write # for invalidating the rosdep cache
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +60,20 @@ jobs:
           sudo cp .rosdep/local.yaml /etc/ros/rosdep/sources.list.d/00-nebuladec-overrides.yaml
           echo "yaml file:///etc/ros/rosdep/sources.list.d/00-nebuladec-overrides.yaml" \
             | sudo tee /etc/ros/rosdep/sources.list.d/00-nebuladec-overrides.list
+
+      - name: Invalidate stale rosdep cache so the override yaml is reapplied
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          KEY="rosdep-${{ runner.arch }}-${{ matrix.rosdistro }}"
+          echo "Attempting to delete cache key: $KEY"
+          curl -fsS -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/caches?key=$KEY&ref=${{ github.ref }}"
+          echo "(cache delete may have failed if no such key existed; that is OK)"
 
       - name: Build
         if: ${{ steps.get-self-packages.outputs.self-packages != '' }}
