@@ -4,11 +4,10 @@
 #ifndef NEBULADEC_ADAPTERS__DECODER_HPP_
 #define NEBULADEC_ADAPTERS__DECODER_HPP_
 
+#include <nebula_core_common/point_types.hpp>
 #include <nebuladec_core/any_decoder.hpp>
 #include <nebuladec_core/identity.hpp>
 #include <nebuladec_core/packet_sniffer.hpp>
-
-#include <nebula_core_common/point_types.hpp>
 
 #include <cstdint>
 #include <memory>

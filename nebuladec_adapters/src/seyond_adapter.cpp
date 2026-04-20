@@ -13,6 +13,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace nebuladec::adapters
@@ -52,19 +53,19 @@ SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
   nebula::drivers::SeyondSensorConfiguration config;
   config.sensor_model = pick_seyond_model();
   config.connection = make_offline_connection();
-  config.fov.azimuth = {0.0F, 0.0F};      // full-circle sentinel
-  config.fov.elevation = {0.0F, 0.0F};    // full-circle sentinel
+  config.fov.azimuth = {0.0F, 0.0F};    // full-circle sentinel
+  config.fov.elevation = {0.0F, 0.0F};  // full-circle sentinel
   config.use_sensor_time = false;
   config.frame_id = "seyond";
   config.setup_sensor = false;
   config.return_mode = nebula::drivers::ReturnMode::STRONGEST;
 
-  auto callback =
-    [this](nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
-      if (cloud && !cloud->empty()) {
-        ready_clouds_.push_back(std::move(cloud));
-      }
-    };
+  auto callback = [this](
+                    nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
+    if (cloud && !cloud->empty()) {
+      ready_clouds_.push_back(std::move(cloud));
+    }
+  };
 
   decoder_ = std::make_unique<nebula::drivers::SeyondDecoder>(
     config, callback, nebula::drivers::SeyondCalibrationData{});
