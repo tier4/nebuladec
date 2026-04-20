@@ -80,9 +80,10 @@ TEST(MakeAdapter, ReturnsSeyondAdapterForSeyondIdentity)
 
 TEST(MakeAdapter, ReturnsNullForUnsupportedVendors)
 {
-  // Hesai is handled separately (needs a specific model to be ready);
-  // see test_hesai_adapter.cpp. M5 covers Velodyne, M6 Robosense.
-  for (auto v : {Vendor::VELODYNE, Vendor::ROBOSENSE, Vendor::UNKNOWN}) {
+  // Hesai and Velodyne are handled separately (they need a specific
+  // model to be ready); see their dedicated adapter tests. M6 covers
+  // Robosense.
+  for (auto v : {Vendor::ROBOSENSE, Vendor::UNKNOWN}) {
     Identity id;
     id.vendor = v;
     auto adapter = make_adapter(id);

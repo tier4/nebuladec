@@ -5,6 +5,7 @@
 
 #include "nebuladec_adapters/hesai_adapter.hpp"
 #include "nebuladec_adapters/seyond_adapter.hpp"
+#include "nebuladec_adapters/velodyne_adapter.hpp"
 
 #include <nebuladec_core/any_decoder.hpp>
 #include <nebuladec_core/identity.hpp>
@@ -31,11 +32,17 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
       }
       return adapter;
     }
-    case Vendor::VELODYNE:
+    case Vendor::VELODYNE: {
+      auto adapter = std::make_unique<adapters::VelodyneAdapter>(identity);
+      if (!adapter->is_ready()) {
+        return nullptr;
+      }
+      return adapter;
+    }
     case Vendor::ROBOSENSE:
     case Vendor::UNKNOWN:
     default:
-      // Velodyne lands in M5; Robosense in M6.
+      // Robosense lands in M6.
       return nullptr;
   }
 }

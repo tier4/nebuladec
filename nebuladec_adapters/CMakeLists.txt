@@ -18,6 +18,7 @@ ament_auto_add_library(${PROJECT_NAME} SHARED
   src/decoder.cpp
   src/hesai_adapter.cpp
   src/seyond_adapter.cpp
+  src/velodyne_adapter.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -34,6 +35,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_hesai_adapter test/test_hesai_adapter.cpp)
   target_link_libraries(test_hesai_adapter ${PROJECT_NAME})
+
+  ament_add_gtest(test_velodyne_adapter test/test_velodyne_adapter.cpp)
+  target_link_libraries(test_velodyne_adapter ${PROJECT_NAME})
 endif()
 
 ament_auto_package()
