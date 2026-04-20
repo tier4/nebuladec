@@ -299,13 +299,77 @@ TEST(PacketSniffer, RobosenseHeliosFamily)
   EXPECT_EQ(id->model, SensorModel::ROBOSENSE_HELIOS);
 }
 
-TEST(PacketSniffer, SeyondVendorDetected)
+TEST(PacketSniffer, SeyondFalconK1)
 {
   PacketSniffer sniffer;
   auto pkt = make_seyond_packet(/*lidar_type=*/0);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::SEYOND);
+  ASSERT_TRUE(id->seyond_model.has_value());
+  EXPECT_EQ(*id->seyond_model, nebula::drivers::SeyondSensorModel::FALCON_K);
+}
+
+TEST(PacketSniffer, SeyondRobinW)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_seyond_packet(/*lidar_type=*/1);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(id->seyond_model.has_value());
+  EXPECT_EQ(*id->seyond_model, nebula::drivers::SeyondSensorModel::ROBIN_W);
+}
+
+TEST(PacketSniffer, SeyondFalconK2)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_seyond_packet(/*lidar_type=*/3);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(id->seyond_model.has_value());
+  EXPECT_EQ(*id->seyond_model, nebula::drivers::SeyondSensorModel::FALCON_K);
+}
+
+TEST(PacketSniffer, SeyondFalconIII)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_seyond_packet(/*lidar_type=*/4);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(id->seyond_model.has_value());
+  EXPECT_EQ(*id->seyond_model, nebula::drivers::SeyondSensorModel::FALCON_K);
+}
+
+TEST(PacketSniffer, SeyondRobinE1X)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_seyond_packet(/*lidar_type=*/5);  // RobinELITE
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(id->seyond_model.has_value());
+  EXPECT_EQ(*id->seyond_model, nebula::drivers::SeyondSensorModel::ROBIN_E1X);
+}
+
+TEST(PacketSniffer, SeyondHummingbird)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_seyond_packet(/*lidar_type=*/7);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  ASSERT_TRUE(id->seyond_model.has_value());
+  EXPECT_EQ(*id->seyond_model, nebula::drivers::SeyondSensorModel::HUMMINGBIRD_D1);
+}
+
+TEST(PacketSniffer, SeyondUnmappedLidarType)
+{
+  // RobinE2X (6), RobinE (2), RobinE2 (8) are not in Nebula's
+  // SeyondSensorModel; vendor is still SEYOND but seyond_model stays empty.
+  PacketSniffer sniffer;
+  auto pkt = make_seyond_packet(/*lidar_type=*/6);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::SEYOND);
+  EXPECT_FALSE(id->seyond_model.has_value());
 }
 
 TEST(PacketSniffer, SeyondRejectsShortPacket)

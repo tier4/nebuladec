@@ -37,12 +37,16 @@ nebula::drivers::SeyondConnectionConfiguration make_offline_connection()
   return connection;
 }
 
-nebula::drivers::SeyondSensorModel pick_seyond_model()
+nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
 {
-  // The Seyond data-packet header does not carry an unambiguous model
-  // identifier that Nebula already maps to SeyondSensorModel. Falcon K
-  // is Seyond's flagship and the most common deployment; use it as the
-  // default until an explicit discriminator lands (see M3 follow-ups).
+  // Prefer the sub-model the sniffer recovered from the packet header's
+  // `lidar_type` byte. Fall back to Falcon K - Seyond's flagship - when
+  // the stream uses a variant Nebula does not model (e.g. RobinE2X).
+  if (
+    identity.seyond_model &&
+    *identity.seyond_model != nebula::drivers::SeyondSensorModel::UNKNOWN) {
+    return *identity.seyond_model;
+  }
   return nebula::drivers::SeyondSensorModel::FALCON_K;
 }
 
@@ -51,7 +55,7 @@ nebula::drivers::SeyondSensorModel pick_seyond_model()
 SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
 {
   nebula::drivers::SeyondSensorConfiguration config;
-  config.sensor_model = pick_seyond_model();
+  config.sensor_model = pick_seyond_model(identity);
   config.connection = make_offline_connection();
   config.fov.azimuth = {0.0F, 0.0F};    // full-circle sentinel
   config.fov.elevation = {0.0F, 0.0F};  // full-circle sentinel

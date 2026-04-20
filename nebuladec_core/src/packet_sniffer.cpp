@@ -16,6 +16,7 @@ namespace
 
 using nebula::drivers::ReturnMode;
 using nebula::drivers::SensorModel;
+using nebula::drivers::SeyondSensorModel;
 
 constexpr std::size_t k_velodyne_packet_size = 1206;
 constexpr std::size_t k_velodyne_return_mode_offset = 1204;
@@ -177,6 +178,31 @@ ReturnMode velodyne_return_mode_from_byte(std::uint8_t return_byte)
   }
 }
 
+// Maps the `lidar_type` byte in SeyondPacketCommon (offset 15) to a
+// SeyondSensorModel. Values come from the official inno-lidar-sdk enum
+// `InnoLidarType` in src/sdk_common/inno_lidar_packet.h:
+//   0=FALCON(K1)  1=ROBINW  2=ROBINE  3=FALCONII_DOT_1/K2  4=FALCONIII
+//   5=ROBINELITE(=Robin-E1X)  6=ROBINE2X  7=HB(Hummingbird)  8=ROBINE2
+// Nebula's SeyondSensorModel only covers FalconK, RobinW, RobinE1X and
+// HummingbirdD1; values outside that set return UNKNOWN.
+SeyondSensorModel seyond_model_from_lidar_type(std::uint8_t lidar_type)
+{
+  switch (lidar_type) {
+    case 0:  // FalconK1
+    case 3:  // FalconII.1 / FalconK2
+    case 4:  // FalconIII
+      return SeyondSensorModel::FALCON_K;
+    case 1:  // RobinW
+      return SeyondSensorModel::ROBIN_W;
+    case 5:  // RobinELITE (Robin-E1X)
+      return SeyondSensorModel::ROBIN_E1X;
+    case 7:  // HB (Hummingbird)
+      return SeyondSensorModel::HUMMINGBIRD_D1;
+    default:
+      return SeyondSensorModel::UNKNOWN;
+  }
+}
+
 }  // namespace
 
 std::optional<Identity> PacketSniffer::identify(const std::uint8_t * data, std::size_t size) const
@@ -185,15 +211,20 @@ std::optional<Identity> PacketSniffer::identify(const std::uint8_t * data, std::
     return std::nullopt;
   }
 
-  // Seyond — distinctive magic in the first two bytes; requires enough
-  // room for the common header so we can read lidar_type in future
-  // milestones.
+  // Seyond — distinctive magic in the first two bytes; lidar_type at
+  // byte offset 15 in SeyondPacketCommon identifies the sub-model.
   constexpr std::size_t k_seyond_min_size = 26;  // sizeof(SeyondPacketCommon)
+  constexpr std::size_t k_seyond_lidar_type_offset = 15;
   if (has_seyond_magic(data, size) && size >= k_seyond_min_size) {
+    const SeyondSensorModel seyond_model =
+      seyond_model_from_lidar_type(data[k_seyond_lidar_type_offset]);
     Identity id;
     id.vendor = Vendor::SEYOND;
-    id.model = SensorModel::UNKNOWN;  // M2: vendor-only; sub-model comes later.
+    id.model = SensorModel::UNKNOWN;  // Seyond uses a separate enum (below).
     id.return_mode = ReturnMode::UNKNOWN;
+    if (seyond_model != SeyondSensorModel::UNKNOWN) {
+      id.seyond_model = seyond_model;
+    }
     id.confidence = 0.9F;
     return id;
   }
