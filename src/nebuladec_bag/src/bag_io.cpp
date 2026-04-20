@@ -318,7 +318,7 @@ InspectSummary inspect(const std::string & input_path)
       }
       rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
       auto packets = it->second.packet_source->extract(serialized);
-      for (auto & pkt : packets) {
+      for (const auto & pkt : packets) {
         feed_packet(it->second, pkt, nullptr);
       }
       continue;
@@ -343,7 +343,7 @@ InspectSummary inspect(const std::string & input_path)
     if (it == topic_states.end()) {
       continue;
     }
-    auto & state = it->second;
+    const auto & state = it->second;
 
     TopicInspectResult result;
     result.topic = state.topic;
@@ -487,7 +487,7 @@ ConvertResult convert(const ConvertOptions & options)
     if (bag_msg->topic_name == packet_spec.topic && state.packet_source) {
       rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
       auto packets = state.packet_source->extract(serialized);
-      for (auto & pkt : packets) {
+      for (const auto & pkt : packets) {
         feed_packet(state, pkt, sink);
       }
     } else if (bag_msg->topic_name == info_topic_name && info_source) {
