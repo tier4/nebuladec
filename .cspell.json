@@ -1,17 +1,20 @@
 {
-  "ignorePaths": [".cppcheck_suppressions"],
+  "ignorePaths": [".cppcheck_suppressions", "src/nebuladec_cli/include/third_party/**"],
   "ignoreRegExpList": [],
   "words": [
     "difop",
     "falconii",
     "falconiii",
+    "libsqlite",
     "msop",
     "nebuladec",
     "pandarat",
     "pandarqt",
     "pandarxt",
+    "ranav",
     "robine",
     "robinelite",
-    "robinw"
+    "robinw",
+    "tabulate"
   ]
 }

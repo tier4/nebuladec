@@ -13,6 +13,7 @@
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
+  <depend>libsqlite3-dev</depend>
   <depend>nebula_msgs</depend>
   <depend>nebuladec_adapters</depend>
   <depend>pandar_msgs</depend>

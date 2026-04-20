@@ -141,12 +141,45 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::feed(
     return std::nullopt;
   }
 
+  if (!first_scan_captured_) {
+    first_scan_packets_.emplace_back(packet, stamp_sec);
+  }
+
   auto result = driver_->parse_cloud_packet(packet, stamp_sec);
   auto & cloud = std::get<0>(result);
-  if (!cloud || cloud->empty()) {
+  const bool emitted = cloud && !cloud->empty();
+
+  if (!first_scan_captured_ && emitted) {
+    first_scan_captured_ = true;
+    first_scan_packets_.shrink_to_fit();
+  }
+
+  if (!emitted) {
     return std::nullopt;
   }
   return cloud;
+}
+
+std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::flush()
+{
+  // Velodyne's scan decoder returns the previous scan only when the
+  // current packet's azimuth wraps past the scan phase. At end-of-bag
+  // there is no next packet to trigger the wrap, so the last scan sits
+  // in `scan_pc_` forever. Replaying the first-scan packets reproduces
+  // the original wrap transition (they are known to have triggered one,
+  // which is why we stopped capturing) and lets the driver emit the
+  // trailing cloud.
+  if (!driver_ || first_scan_packets_.empty()) {
+    return std::nullopt;
+  }
+  for (const auto & [pkt, stamp] : first_scan_packets_) {
+    auto result = driver_->parse_cloud_packet(pkt, stamp);
+    auto & cloud = std::get<0>(result);
+    if (cloud && !cloud->empty()) {
+      return cloud;
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace nebuladec::adapters

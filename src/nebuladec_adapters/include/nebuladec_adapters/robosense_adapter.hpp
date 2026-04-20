@@ -58,6 +58,11 @@ public:
 
   void feed_info(const std::vector<std::uint8_t> & packet) override;
 
+  /// Flush the final in-progress scan. Replays the cached first-scan
+  /// MSOP packets so the decoder's angle corrector crosses scan phase
+  /// once more, letting the trailing `decode_pc_` swap into the output.
+  std::optional<nebula::drivers::NebulaPointCloudPtr> flush() override;
+
   Identity identity() const override { return identity_; }
 
 private:
@@ -65,6 +70,12 @@ private:
   std::shared_ptr<nebula::drivers::RobosenseSensorConfiguration> config_;
   std::unique_ptr<nebula::drivers::RobosenseInfoDriver> info_driver_;
   std::unique_ptr<nebula::drivers::RobosenseDriver> driver_;
+  /// MSOP packets from the first full scan after the driver came up,
+  /// captured until the first cloud is emitted. Replayed by flush() so
+  /// the angle corrector re-crosses the scan-phase cut and the trailing
+  /// scan surfaces.
+  std::vector<std::vector<std::uint8_t>> first_scan_packets_;
+  bool first_scan_captured_{false};
 };
 
 }  // namespace nebuladec::adapters

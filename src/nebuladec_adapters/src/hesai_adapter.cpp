@@ -168,11 +168,23 @@ HesaiAdapter::HesaiAdapter(const Identity & identity) : identity_(identity)
 
   auto config = make_offline_config(identity.model, identity.return_mode);
 
+  // Nebula's HesaiDecoder::on_scan_complete clears the underlying vector
+  // immediately after invoking this callback, so storing the shared_ptr
+  // directly would hand the adapter an empty cloud. Swap the vector
+  // contents into an owned shared_ptr instead of copying: swap is O(1)
+  // (avoids ~70K point copies per scan on QT128), and we restore the
+  // decoder's pre-allocated capacity so the next scan fills without
+  // triggering a reallocation.
   auto callback = [this](
                     const nebula::drivers::NebulaPointCloudPtr & cloud, double /*timestamp_s*/) {
-    if (cloud && !cloud->empty()) {
-      ready_clouds_.push_back(cloud);
+    if (!cloud || cloud->empty()) {
+      return;
     }
+    const auto capacity = cloud->capacity();
+    auto owned = std::make_shared<nebula::drivers::NebulaPointCloud>();
+    owned->swap(*cloud);
+    cloud->reserve(capacity);
+    ready_clouds_.push_back(std::move(owned));
   };
 
   try {
@@ -192,8 +204,46 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::feed(
     return std::nullopt;
   }
 
+  if (!first_scan_captured_) {
+    first_scan_packets_.push_back(packet);
+  }
+
   driver_->parse_cloud_packet(packet);
 
+  // Stop capturing once the decoder has produced at least one cloud:
+  // replaying the packets that led up to (and including) the first cut
+  // is sufficient to trigger another cut crossing during flush().
+  if (!first_scan_captured_ && !ready_clouds_.empty()) {
+    first_scan_captured_ = true;
+    first_scan_packets_.shrink_to_fit();
+  }
+
+  if (ready_clouds_.empty()) {
+    return std::nullopt;
+  }
+  auto cloud = std::move(ready_clouds_.front());
+  ready_clouds_.pop_front();
+  return cloud;
+}
+
+std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::flush()
+{
+  // Hesai's decoder only emits a scan when the *next* packet crosses
+  // the cut angle. At end-of-stream the final scan is buffered inside
+  // the driver with no packet left to trigger the crossing. Replaying
+  // the first-scan packets reproduces the original cut transition:
+  // those packets are known to have triggered at least one cut (that
+  // is precisely the condition under which we stopped capturing), so
+  // feeding them again guarantees the trailing buffer is emitted.
+  if (!driver_ || first_scan_packets_.empty()) {
+    return std::nullopt;
+  }
+  for (const auto & pkt : first_scan_packets_) {
+    driver_->parse_cloud_packet(pkt);
+    if (!ready_clouds_.empty()) {
+      break;  // Got the trailing cloud; stop replaying.
+    }
+  }
   if (ready_clouds_.empty()) {
     return std::nullopt;
   }

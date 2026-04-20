@@ -56,6 +56,11 @@ public:
   /// on non-Robosense streams.
   void feed_info(const std::vector<std::uint8_t> & packet);
 
+  /// Flush the final buffered scan, if any, once no more packets will be
+  /// fed. Returns the last scan that would otherwise remain inside the
+  /// driver (see AnyDecoder::flush). The min_points filter still applies.
+  std::optional<nebula::drivers::NebulaPointCloudPtr> flush();
+
   /// The resolved identity of the stream, once enough packets have been
   /// sniffed. Empty until the first identifiable packet is seen.
   std::optional<Identity> identity() const;

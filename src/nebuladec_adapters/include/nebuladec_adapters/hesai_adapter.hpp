@@ -54,12 +54,25 @@ public:
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
 
+  /// Flush the final in-progress scan. Re-feeds the cached first packet
+  /// so the scan cutter crosses the cut angle once more and emits the
+  /// buffer that would otherwise be stuck inside the driver after the
+  /// last real packet.
+  std::optional<nebula::drivers::NebulaPointCloudPtr> flush() override;
+
   Identity identity() const override { return identity_; }
 
 private:
   Identity identity_;
   std::unique_ptr<nebula::drivers::HesaiDriver> driver_;
   std::deque<nebula::drivers::NebulaPointCloudPtr> ready_clouds_;
+  /// Packets from the first scan of the stream, captured until the
+  /// driver emits its first cloud. flush() replays them to reproduce
+  /// the original cut-angle crossing at end-of-bag; a single cached
+  /// packet is not enough because the first packet's azimuth alone
+  /// does not reliably cross the cut relative to the last real packet.
+  std::vector<std::vector<std::uint8_t>> first_scan_packets_;
+  bool first_scan_captured_{false};
 };
 
 }  // namespace nebuladec::adapters

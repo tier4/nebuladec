@@ -26,7 +26,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <utility>
 #include <vector>
 
 namespace nebuladec
@@ -132,6 +131,18 @@ void Decoder::feed_info(const std::vector<std::uint8_t> & packet)
   if (impl_->adapter) {
     impl_->adapter->feed_info(packet);
   }
+}
+
+std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::flush()
+{
+  if (!impl_->adapter) {
+    return std::nullopt;
+  }
+  auto cloud = impl_->adapter->flush();
+  if (cloud && *cloud && (*cloud)->size() < impl_->min_points) {
+    return std::nullopt;
+  }
+  return cloud;
 }
 
 std::optional<Identity> Decoder::identity() const
