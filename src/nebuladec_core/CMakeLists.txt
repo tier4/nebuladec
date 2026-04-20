@@ -24,6 +24,9 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  # Formatting is enforced by clang-format via pre-commit; skip the redundant
+  # ament_uncrustify lint test whose style conflicts with clang-format.
+  set(ament_cmake_uncrustify_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)

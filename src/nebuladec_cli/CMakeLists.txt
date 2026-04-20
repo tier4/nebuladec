@@ -18,6 +18,9 @@ ament_auto_add_executable(nebuladec src/main.cpp)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  # Formatting is enforced by clang-format via pre-commit; skip the redundant
+  # ament_uncrustify lint test whose style conflicts with clang-format.
+  set(ament_cmake_uncrustify_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
 
