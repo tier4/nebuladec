@@ -38,8 +38,8 @@ namespace
 std::vector<std::uint8_t> make_hesai_pandar40p_packet()
 {
   std::vector<std::uint8_t> pkt(1256, 0);
-  pkt[0] = 0xFF;   // sop low  (uint16 LE == 0xEEFF)
-  pkt[1] = 0xEE;   // sop high
+  pkt[0] = 0xEE;   // sop high  (big-endian 0xEEFF)
+  pkt[1] = 0xFF;   // sop low
   pkt[6] = 40;     // laser_num
   pkt[7] = 10;     // block_num
   pkt[10] = 0x37;  // return_num == single strongest

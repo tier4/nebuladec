@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace nebuladec::bag
 {
@@ -41,20 +42,38 @@ struct InputSpec
 /// metadata.yaml, unknown storage extension, ...).
 InputSpec detect_input(const std::string & path);
 
-/// @brief Summary of an `inspect()` run.
-struct InspectSummary
+/// @brief Per-topic result of an `inspect()` run.
+struct TopicInspectResult
 {
+  std::string topic;
+  std::string message_type;
+  /// Vendor derivable from the ROS 2 message type alone. `UNKNOWN` for
+  /// `nebula_msgs/NebulaPackets`, which needs packet-level sniffing.
+  Vendor vendor_by_message_type{Vendor::UNKNOWN};
+  /// Vendor + model resolved by feeding packets through the sniffer.
+  /// Empty when no packet could be identified (e.g. an empty topic).
   std::optional<Identity> identity;
   std::size_t data_packets{0};
   std::size_t info_packets{0};
   std::size_t clouds_produced{0};
-  std::string packets_topic;
+  /// Robosense DIFOP topic paired with this packet topic. Only populated
+  /// when the packet vendor is Robosense and the bag has exactly one
+  /// info topic; with zero or multiple info topics pairing is ambiguous
+  /// and this stays empty. Topic names are never used to guess sensor
+  /// model -- model comes strictly from message type and packet bytes.
   std::string info_topic;
 };
 
-/// Open `input_path`, auto-discover the Nebula packet topic (and DIFOP
-/// topic when present), feed every packet through a Decoder, and return
-/// a summary. No outputs are written.
+/// @brief Summary of an `inspect()` run across all packet topics.
+struct InspectSummary
+{
+  std::vector<TopicInspectResult> topics;
+};
+
+/// Open `input_path`, auto-discover every Nebula packet topic (LiDAR and
+/// Continental radar alike), feed each topic through its own sniffer /
+/// decoder pipeline, and return one summary entry per topic. Radar
+/// topics are identified but not decoded.
 InspectSummary inspect(const std::string & input_path);
 
 /// @brief Options accepted by `convert()`.

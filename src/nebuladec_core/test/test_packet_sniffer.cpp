@@ -27,16 +27,17 @@ namespace
 using nebula::drivers::ReturnMode;
 using nebula::drivers::SensorModel;
 
-// Hesai packets start with SOP == 0xEEFF (uint16 LE => bytes {0xFF, 0xEE}).
-// Header12B layout: sop(2), proto_major(1), proto_minor(1), reserved(2),
-// laser_num(1), block_num(1), reserved(1), dis_unit(1), return_num(1), flags(1).
+// Hesai packets start with SOP 0xEEFF written big-endian => bytes
+// {0xEE, 0xFF} at offsets 0 and 1. Header12B layout: sop(2),
+// proto_major(1), proto_minor(1), reserved(2), laser_num(1), block_num(1),
+// reserved(1), dis_unit(1), return_num(1), flags(1).
 std::vector<std::uint8_t> make_hesai_packet(
   std::uint8_t laser_num, std::uint8_t block_num, std::uint8_t return_num, std::size_t size,
   std::uint8_t protocol_major = 0)
 {
   std::vector<std::uint8_t> pkt(size, 0);
-  pkt[0] = 0xFF;
-  pkt[1] = 0xEE;
+  pkt[0] = 0xEE;
+  pkt[1] = 0xFF;
   pkt[2] = protocol_major;
   pkt[6] = laser_num;
   pkt[7] = block_num;
@@ -45,8 +46,8 @@ std::vector<std::uint8_t> make_hesai_packet(
 }
 
 // Velodyne packets are always 1206 bytes; the first block header is
-// g_upper_bank (0xEEFF LE => {0xFF, 0xEE}). Byte 1204 = return_mode
-// (55/56/57 = strongest/last/dual). Byte 1205 = product id.
+// g_upper_bank (0xEEFF little-endian => bytes {0xFF, 0xEE}). Byte 1204
+// = return_mode (55/56/57 = strongest/last/dual). Byte 1205 = product id.
 std::vector<std::uint8_t> make_velodyne_packet(
   std::uint8_t return_mode_byte, std::uint8_t product_id)
 {
@@ -172,8 +173,10 @@ TEST(PacketSniffer, HesaiPandarQT64)
 
 TEST(PacketSniffer, HesaiPandarQT128)
 {
+  // Verified against Nebula's qt128 decoder_ground_truth capture: the
+  // first packet is 1127 bytes with proto_major=3.
   PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 1095);
+  auto pkt = make_hesai_packet(128, 2, 0x37, 1127, /*protocol_major=*/3);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::HESAI);
@@ -190,30 +193,13 @@ TEST(PacketSniffer, HesaiPandarAT128)
   EXPECT_EQ(id->model, SensorModel::HESAI_PANDARAT128);
 }
 
-TEST(PacketSniffer, HesaiPandar128E3X)
+TEST(PacketSniffer, HesaiPandarOT128)
 {
+  // Verified against Nebula's ot128 decoder_ground_truth capture: the
+  // first packet is 861 bytes with proto_major=1. Nebula maps OT128 onto
+  // HESAI_PANDAR128_E4X (see Packet128E4X = Packet128E3X alias).
   PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/3);
-  auto id = sniffer.identify(pkt);
-  ASSERT_TRUE(id.has_value());
-  EXPECT_EQ(id->vendor, Vendor::HESAI);
-  EXPECT_EQ(id->model, SensorModel::HESAI_PANDAR128_E3X);
-}
-
-TEST(PacketSniffer, HesaiPandar128E4X)
-{
-  PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/4);
-  auto id = sniffer.identify(pkt);
-  ASSERT_TRUE(id.has_value());
-  EXPECT_EQ(id->vendor, Vendor::HESAI);
-  EXPECT_EQ(id->model, SensorModel::HESAI_PANDAR128_E4X);
-}
-
-TEST(PacketSniffer, HesaiPandar128UnknownProtocolDefaultsToE4X)
-{
-  PacketSniffer sniffer;
-  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/0);
+  auto pkt = make_hesai_packet(128, 2, 0x37, 861, /*protocol_major=*/1);
   auto id = sniffer.identify(pkt);
   ASSERT_TRUE(id.has_value());
   EXPECT_EQ(id->vendor, Vendor::HESAI);
@@ -388,6 +374,126 @@ TEST(PacketSniffer, SeyondRejectsShortPacket)
   PacketSniffer sniffer;
   std::vector<std::uint8_t> pkt{0x6A, 0x17};  // magic only, no room for header
   EXPECT_FALSE(sniffer.identify(pkt).has_value());
+}
+
+// --- Continental radar --------------------------------------------------
+//
+// ARS548 UDP payload: {service_id:BE u16 = 0, method_id:BE u16, ...}.
+// SRR520 UDP payload: {can_message_id:BE u32, ...}.
+// Matching requires BOTH the header value AND the exact payload size.
+
+namespace
+{
+std::vector<std::uint8_t> make_ars548_packet(std::uint16_t method_id, std::size_t size)
+{
+  std::vector<std::uint8_t> pkt(size, 0);
+  // BE u16 service_id = 0
+  pkt[0] = 0x00;
+  pkt[1] = 0x00;
+  // BE u16 method_id
+  pkt[2] = static_cast<std::uint8_t>((method_id >> 8) & 0xFF);
+  pkt[3] = static_cast<std::uint8_t>(method_id & 0xFF);
+  return pkt;
+}
+
+std::vector<std::uint8_t> make_srr520_packet(std::uint32_t can_id, std::size_t size)
+{
+  std::vector<std::uint8_t> pkt(size, 0);
+  pkt[0] = static_cast<std::uint8_t>((can_id >> 24) & 0xFF);
+  pkt[1] = static_cast<std::uint8_t>((can_id >> 16) & 0xFF);
+  pkt[2] = static_cast<std::uint8_t>((can_id >> 8) & 0xFF);
+  pkt[3] = static_cast<std::uint8_t>(can_id & 0xFF);
+  return pkt;
+}
+}  // namespace
+
+TEST(PacketSniffer, ContinentalArs548DetectionList)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_ars548_packet(/*method_id=*/336, /*size=*/35336);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::CONTINENTAL);
+  EXPECT_EQ(id->model, SensorModel::CONTINENTAL_ARS548);
+}
+
+TEST(PacketSniffer, ContinentalArs548ObjectListCommon)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_ars548_packet(/*method_id=*/329, /*size=*/9401);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::CONTINENTAL);
+  EXPECT_EQ(id->model, SensorModel::CONTINENTAL_ARS548);
+}
+
+TEST(PacketSniffer, ContinentalArs548SensorStatus)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_ars548_packet(/*method_id=*/380, /*size=*/84);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::CONTINENTAL);
+  EXPECT_EQ(id->model, SensorModel::CONTINENTAL_ARS548);
+}
+
+TEST(PacketSniffer, ContinentalArs548WrongSizeRejected)
+{
+  PacketSniffer sniffer;
+  // Correct method id, wrong payload size.
+  auto pkt = make_ars548_packet(/*method_id=*/336, /*size=*/1000);
+  EXPECT_FALSE(sniffer.identify(pkt).has_value());
+}
+
+TEST(PacketSniffer, ContinentalSrr520DetectionHeader)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_srr520_packet(/*can_id=*/900, /*size=*/32);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::CONTINENTAL);
+  EXPECT_EQ(id->model, SensorModel::CONTINENTAL_SRR520);
+}
+
+TEST(PacketSniffer, ContinentalSrr520ObjectElement)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_srr520_packet(/*can_id=*/1201, /*size=*/64);
+  auto id = sniffer.identify(pkt);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::CONTINENTAL);
+  EXPECT_EQ(id->model, SensorModel::CONTINENTAL_SRR520);
+}
+
+TEST(PacketSniffer, VendorHintRestrictsDetection)
+{
+  PacketSniffer sniffer;
+  // Hesai packet, but hint says VELODYNE — sniffer should NOT return HESAI.
+  auto pkt = make_hesai_packet(40, 10, 0x37, 1256);
+  auto id = sniffer.identify(pkt, Vendor::VELODYNE);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::VELODYNE);
+  EXPECT_EQ(id->model, SensorModel::UNKNOWN);
+}
+
+TEST(PacketSniffer, VendorHintPropagatesModelWhenMatched)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_hesai_packet(40, 10, 0x37, 1256);
+  auto id = sniffer.identify(pkt, Vendor::HESAI);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::HESAI);
+  EXPECT_EQ(id->model, SensorModel::HESAI_PANDAR40P);
+}
+
+TEST(PacketSniffer, VendorHintContinentalIdentifiesArs548)
+{
+  PacketSniffer sniffer;
+  auto pkt = make_ars548_packet(/*method_id=*/336, /*size=*/35336);
+  auto id = sniffer.identify(pkt, Vendor::CONTINENTAL);
+  ASSERT_TRUE(id.has_value());
+  EXPECT_EQ(id->vendor, Vendor::CONTINENTAL);
+  EXPECT_EQ(id->model, SensorModel::CONTINENTAL_ARS548);
 }
 
 }  // namespace nebuladec

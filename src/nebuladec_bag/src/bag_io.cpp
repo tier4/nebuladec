@@ -39,6 +39,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -123,89 +124,137 @@ InputSpec detect_input(const std::string & path)
 namespace
 {
 
-struct TopicSelection
+struct PacketTopicSpec
 {
-  std::string packets_topic;
-  std::string packets_type;
-  std::string info_topic;
-  std::string info_type;
+  std::string topic;
+  std::string type;
 };
 
-TopicSelection select_topics(
-  const rosbag2_cpp::Reader & reader, const std::optional<std::string> & packets_override,
-  const std::optional<std::string> & info_override)
+struct InfoTopicSpec
 {
-  TopicSelection sel;
+  std::string topic;
+  std::string type;
+};
+
+struct DiscoveredTopics
+{
+  std::vector<PacketTopicSpec> packet_topics;
+  std::vector<InfoTopicSpec> info_topics;
+};
+
+DiscoveredTopics discover_topics(const rosbag2_cpp::Reader & reader)
+{
+  DiscoveredTopics out;
   for (const auto & info : reader.get_metadata().topics_with_message_count) {
     const auto & meta = info.topic_metadata;
-    const auto & name = meta.name;
-    const auto & type = meta.type;
-
-    if (packets_override && name == *packets_override) {
-      sel.packets_topic = name;
-      sel.packets_type = type;
-    } else if (!packets_override && sel.packets_topic.empty() && is_packet_type(type)) {
-      sel.packets_topic = name;
-      sel.packets_type = type;
-    }
-
-    if (info_override && name == *info_override) {
-      sel.info_topic = name;
-      sel.info_type = type;
-    } else if (!info_override && sel.info_topic.empty() && is_info_type(type)) {
-      sel.info_topic = name;
-      sel.info_type = type;
+    if (is_packet_type(meta.type)) {
+      out.packet_topics.push_back({meta.name, meta.type});
+    } else if (is_info_type(meta.type)) {
+      out.info_topics.push_back({meta.name, meta.type});
     }
   }
-
-  if (sel.packets_topic.empty()) {
-    throw std::runtime_error("no Nebula packet topic found in bag");
-  }
-  return sel;
+  return out;
 }
 
-struct PipelineState
+/// Auto-pair a Robosense packet topic with its DIFOP info topic, using
+/// only structural signals (no topic-name heuristics):
+///   * exactly one info topic in the bag -> pair with every Robosense
+///     packet topic, on the assumption that a single bag carries one
+///     Robosense calibration;
+///   * zero or multiple info topics -> return empty; the caller must
+///     pass an explicit override (e.g. --info-topic) to disambiguate.
+/// Model identification NEVER depends on this pairing; the sniffer
+/// resolves vendor and model from packet bytes alone.
+std::string unique_info_topic(const std::vector<InfoTopicSpec> & infos)
 {
-  Decoder decoder;
+  return infos.size() == 1 ? infos.front().topic : "";
+}
+
+struct TopicState
+{
+  std::string topic;
+  std::string type;
+  Vendor vendor_hint{Vendor::UNKNOWN};
   std::unique_ptr<PacketSource> packet_source;
-  std::unique_ptr<InfoSource> info_source;
+  Decoder decoder;
   std::size_t data_packets{0};
   std::size_t info_packets{0};
   std::size_t clouds_produced{0};
+  /// Tracks the last-seen identity so callers can inspect Continental
+  /// radar topics even though make_adapter returns nullptr for them.
+  /// Mirrors `decoder.identity()` for LiDAR vendors and carries the
+  /// sniffed CONTINENTAL identity for radar.
+  std::optional<Identity> sniffed_identity;
+  PacketSniffer sniffer;
 };
 
-void process_bag(
-  rosbag2_cpp::Reader & reader, const TopicSelection & sel, PipelineState & state,
+struct InfoState
+{
+  std::string topic;
+  std::string type;
+  std::unique_ptr<InfoSource> info_source;
+  /// Packet topics that should receive feed_info() calls for this info
+  /// topic. Set during inspect() / convert() setup and only populated
+  /// when the bag has exactly one info topic.
+  std::vector<std::string> target_packet_topics;
+};
+
+using TopicStateMap = std::unordered_map<std::string, TopicState>;
+using InfoStateMap = std::unordered_map<std::string, InfoState>;
+
+void feed_packet(
+  TopicState & state, const PacketBytes & pkt,
   const std::function<void(nebula::drivers::NebulaPointCloudPtr, std::int64_t)> & cloud_sink)
 {
-  state.packet_source = make_packet_source(sel.packets_type);
-  if (!sel.info_type.empty()) {
-    state.info_source = make_info_source(sel.info_type);
-  }
+  ++state.data_packets;
 
-  while (reader.has_next()) {
-    auto bag_msg = reader.read_next();
-    const auto & topic = bag_msg->topic_name;
-
-    if (topic == sel.packets_topic && state.packet_source) {
-      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-      auto packets = state.packet_source->extract(serialized);
-      for (auto & pkt : packets) {
-        ++state.data_packets;
-        const double stamp_sec = static_cast<double>(pkt.stamp_ns) / 1e9;
-        if (auto cloud = state.decoder.feed(pkt.data, stamp_sec); cloud && *cloud) {
-          ++state.clouds_produced;
-          cloud_sink(*cloud, pkt.stamp_ns);
-        }
-      }
-    } else if (topic == sel.info_topic && state.info_source) {
-      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-      auto info_bytes = state.info_source->extract(serialized);
-      if (!info_bytes.empty()) {
-        ++state.info_packets;
-        state.decoder.feed_info(info_bytes);
+  // Keep sniffing for model information until we have a concrete
+  // identity. Once resolved, the decoder short-circuits.
+  if (
+    !state.sniffed_identity ||
+    state.sniffed_identity->model == nebula::drivers::SensorModel::UNKNOWN) {
+    if (auto id = state.sniffer.identify(pkt.data, state.vendor_hint); id) {
+      // Accept the newly-sniffed identity only if it strictly improves
+      // on what we already have (unknown -> resolved model). Prevents
+      // later garbage packets from wiping out a confirmed match.
+      const bool first = !state.sniffed_identity.has_value();
+      const bool resolved_model =
+        id->model != nebula::drivers::SensorModel::UNKNOWN || id->seyond_model.has_value();
+      if (
+        first || (resolved_model &&
+                  state.sniffed_identity->model == nebula::drivers::SensorModel::UNKNOWN)) {
+        state.sniffed_identity = id;
       }
     }
+  }
+
+  const double stamp_sec = static_cast<double>(pkt.stamp_ns) / 1e9;
+  auto cloud = state.decoder.feed(pkt.data, stamp_sec);
+  if (cloud && *cloud) {
+    ++state.clouds_produced;
+    if (cloud_sink) {
+      cloud_sink(*cloud, pkt.stamp_ns);
+    }
+  }
+  // Prefer the decoder's resolved identity once it exists: it reflects
+  // the adapter's own view (useful when, e.g., a Robosense DIFOP packet
+  // pins down the model).
+  if (auto decoder_id = state.decoder.identity(); decoder_id) {
+    state.sniffed_identity = decoder_id;
+  }
+}
+
+void feed_info_to_targets(
+  const InfoState & info_state, const std::vector<std::uint8_t> & info_bytes,
+  TopicStateMap & topics)
+{
+  for (const auto & target : info_state.target_packet_topics) {
+    auto it = topics.find(target);
+    if (it == topics.end()) {
+      continue;
+    }
+    ++it->second.info_packets;
+    it->second.decoder.feed_info(info_bytes);
   }
 }
 
@@ -218,19 +267,152 @@ InspectSummary inspect(const std::string & input_path)
   rosbag2_cpp::Reader reader;
   reader.open(to_storage_options(spec));
 
-  const auto sel = select_topics(reader, std::nullopt, std::nullopt);
-  PipelineState state;
-  process_bag(reader, sel, state, [](auto, auto) {});
+  const auto discovered = discover_topics(reader);
+  if (discovered.packet_topics.empty()) {
+    return {};
+  }
+
+  TopicStateMap topic_states;
+  topic_states.reserve(discovered.packet_topics.size());
+  for (const auto & pt : discovered.packet_topics) {
+    TopicState state;
+    state.topic = pt.topic;
+    state.type = pt.type;
+    state.vendor_hint = vendor_from_message_type(pt.type);
+    state.packet_source = make_packet_source(pt.type);
+    state.decoder.set_vendor_hint(state.vendor_hint);
+    topic_states.emplace(pt.topic, std::move(state));
+  }
+
+  InfoStateMap info_states;
+  info_states.reserve(discovered.info_topics.size());
+  for (const auto & it : discovered.info_topics) {
+    InfoState info;
+    info.topic = it.topic;
+    info.type = it.type;
+    info.info_source = make_info_source(it.type);
+    info_states.emplace(it.topic, std::move(info));
+  }
+  // When the bag contains exactly one info topic, route it to every
+  // Robosense packet topic. With zero or multiple info topics we cannot
+  // decide ownership without a topic-name heuristic, so we stay silent
+  // and leave pairing to an explicit --info-topic override. Model
+  // identification does not depend on this step.
+  const auto global_info_topic = unique_info_topic(discovered.info_topics);
+  if (!global_info_topic.empty()) {
+    auto info_it = info_states.find(global_info_topic);
+    if (info_it != info_states.end()) {
+      for (auto & [topic_name, state] : topic_states) {
+        if (state.vendor_hint == Vendor::ROBOSENSE) {
+          info_it->second.target_packet_topics.push_back(topic_name);
+        }
+      }
+    }
+  }
+
+  while (reader.has_next()) {
+    auto bag_msg = reader.read_next();
+    if (auto it = topic_states.find(bag_msg->topic_name); it != topic_states.end()) {
+      if (!it->second.packet_source) {
+        continue;
+      }
+      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+      auto packets = it->second.packet_source->extract(serialized);
+      for (const auto & pkt : packets) {
+        feed_packet(it->second, pkt, nullptr);
+      }
+      continue;
+    }
+    if (auto it = info_states.find(bag_msg->topic_name); it != info_states.end()) {
+      if (!it->second.info_source || it->second.target_packet_topics.empty()) {
+        continue;
+      }
+      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+      auto info_bytes = it->second.info_source->extract(serialized);
+      if (!info_bytes.empty()) {
+        feed_info_to_targets(it->second, info_bytes, topic_states);
+      }
+    }
+  }
 
   InspectSummary summary;
-  summary.identity = state.decoder.identity();
-  summary.data_packets = state.data_packets;
-  summary.info_packets = state.info_packets;
-  summary.clouds_produced = state.clouds_produced;
-  summary.packets_topic = sel.packets_topic;
-  summary.info_topic = sel.info_topic;
+  summary.topics.reserve(discovered.packet_topics.size());
+  // Preserve bag metadata order so repeated inspect() calls are stable.
+  for (const auto & pt : discovered.packet_topics) {
+    auto it = topic_states.find(pt.topic);
+    if (it == topic_states.end()) {
+      continue;
+    }
+    const auto & state = it->second;
+
+    TopicInspectResult result;
+    result.topic = state.topic;
+    result.message_type = state.type;
+    result.vendor_by_message_type = state.vendor_hint;
+    result.identity = state.sniffed_identity;
+    result.data_packets = state.data_packets;
+    result.info_packets = state.info_packets;
+    result.clouds_produced = state.clouds_produced;
+    if (state.vendor_hint == Vendor::ROBOSENSE) {
+      result.info_topic = global_info_topic;
+    }
+    summary.topics.push_back(std::move(result));
+  }
   return summary;
 }
+
+namespace
+{
+
+/// Resolve which packet topic `convert()` should operate on. When the
+/// caller supplies an override, honor it verbatim. Otherwise require a
+/// single LiDAR-capable topic — if more than one exists, fail with a
+/// message pointing the user to --packets-topic. Radar topics are
+/// excluded from auto-selection since `convert()` writes PointCloud2.
+PacketTopicSpec choose_convert_packet_topic(
+  const DiscoveredTopics & discovered, const std::optional<std::string> & override_name)
+{
+  if (override_name) {
+    for (const auto & pt : discovered.packet_topics) {
+      if (pt.topic == *override_name) {
+        return pt;
+      }
+    }
+    throw std::runtime_error("packets topic '" + *override_name + "' not found in bag");
+  }
+
+  std::vector<PacketTopicSpec> lidar_candidates;
+  for (const auto & pt : discovered.packet_topics) {
+    const auto vendor_hint = vendor_from_message_type(pt.type);
+    // NebulaPackets (vendor_hint == UNKNOWN) is ambiguous — it could be
+    // radar. Auto-select only when it is the sole candidate.
+    if (vendor_hint != Vendor::UNKNOWN) {
+      lidar_candidates.push_back(pt);
+    }
+  }
+  if (lidar_candidates.empty()) {
+    // Fall back to NebulaPackets topics; sniffer in the pipeline will
+    // sort Seyond from radar.
+    for (const auto & pt : discovered.packet_topics) {
+      if (vendor_from_message_type(pt.type) == Vendor::UNKNOWN) {
+        lidar_candidates.push_back(pt);
+      }
+    }
+  }
+  if (lidar_candidates.empty()) {
+    throw std::runtime_error("no Nebula packet topic found in bag");
+  }
+  if (lidar_candidates.size() > 1) {
+    std::string msg = "multiple packet topics present; pass --packets-topic to pick one:";
+    for (const auto & c : lidar_candidates) {
+      msg += "\n  " + c.topic + " (" + c.type + ")";
+    }
+    throw std::runtime_error(msg);
+  }
+  return lidar_candidates.front();
+}
+
+}  // namespace
 
 ConvertResult convert(const ConvertOptions & options)
 {
@@ -238,6 +420,30 @@ ConvertResult convert(const ConvertOptions & options)
 
   rosbag2_cpp::Reader reader;
   reader.open(to_storage_options(in_spec));
+
+  const auto discovered = discover_topics(reader);
+  const auto packet_spec = choose_convert_packet_topic(discovered, options.packets_topic);
+  const auto vendor_hint = vendor_from_message_type(packet_spec.type);
+
+  // Info topic: honor an explicit override; otherwise pair by name prefix
+  // for Robosense streams.
+  std::string info_topic_name;
+  if (options.info_topic) {
+    for (const auto & it : discovered.info_topics) {
+      if (it.topic == *options.info_topic) {
+        info_topic_name = it.topic;
+        break;
+      }
+    }
+    if (info_topic_name.empty()) {
+      throw std::runtime_error("info topic '" + *options.info_topic + "' not found in bag");
+    }
+  } else if (vendor_hint == Vendor::ROBOSENSE) {
+    // Auto-pair only when the bag has exactly one info topic. Multiple
+    // info topics require --info-topic so pairing never relies on
+    // topic-name matching.
+    info_topic_name = unique_info_topic(discovered.info_topics);
+  }
 
   rosbag2_cpp::Writer writer;
   rosbag2_storage::StorageOptions out_opts;
@@ -251,8 +457,22 @@ ConvertResult convert(const ConvertOptions & options)
   topic_meta.serialization_format = "cdr";
   writer.create_topic(topic_meta);
 
-  const auto sel = select_topics(reader, options.packets_topic, options.info_topic);
-  PipelineState state;
+  TopicState state;
+  state.topic = packet_spec.topic;
+  state.type = packet_spec.type;
+  state.vendor_hint = vendor_hint;
+  state.packet_source = make_packet_source(packet_spec.type);
+  state.decoder.set_vendor_hint(vendor_hint);
+
+  std::unique_ptr<InfoSource> info_source;
+  if (!info_topic_name.empty()) {
+    for (const auto & it : discovered.info_topics) {
+      if (it.topic == info_topic_name) {
+        info_source = make_info_source(it.type);
+        break;
+      }
+    }
+  }
 
   auto sink = [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
     if (!cloud || cloud->empty()) {
@@ -262,15 +482,31 @@ ConvertResult convert(const ConvertOptions & options)
     writer.write(pc_msg, options.output_topic, rclcpp::Time(stamp_ns));
   };
 
-  process_bag(reader, sel, state, sink);
+  while (reader.has_next()) {
+    auto bag_msg = reader.read_next();
+    if (bag_msg->topic_name == packet_spec.topic && state.packet_source) {
+      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+      auto packets = state.packet_source->extract(serialized);
+      for (const auto & pkt : packets) {
+        feed_packet(state, pkt, sink);
+      }
+    } else if (bag_msg->topic_name == info_topic_name && info_source) {
+      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+      auto info_bytes = info_source->extract(serialized);
+      if (!info_bytes.empty()) {
+        ++state.info_packets;
+        state.decoder.feed_info(info_bytes);
+      }
+    }
+  }
 
   ConvertResult result;
-  result.identity = state.decoder.identity();
+  result.identity = state.sniffed_identity ? state.sniffed_identity : state.decoder.identity();
   result.data_packets = state.data_packets;
   result.info_packets = state.info_packets;
   result.clouds_written = state.clouds_produced;
-  result.packets_topic = sel.packets_topic;
-  result.info_topic = sel.info_topic;
+  result.packets_topic = packet_spec.topic;
+  result.info_topic = info_topic_name;
   return result;
 }
 

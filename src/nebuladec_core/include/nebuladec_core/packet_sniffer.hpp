@@ -29,17 +29,26 @@ namespace nebuladec
 ///
 /// Stateless; callers that want robustness against corrupt or mixed streams
 /// should run `consensus()` across multiple packets.
+///
+/// `vendor_hint` lets the caller pre-commit the vendor (for example when it
+/// is derivable from the ROS 2 message type at the bag layer). When set,
+/// the sniffer restricts itself to that vendor's detectors and never
+/// returns a different vendor. `Vendor::UNKNOWN` (the default) runs every
+/// detector and is used for the generic `nebula_msgs/NebulaPackets`
+/// container, which today carries both Seyond LiDAR and Continental radar.
 class PacketSniffer
 {
 public:
   PacketSniffer() = default;
 
   /// Identify a single packet. Returns nullopt if no vendor matches.
-  std::optional<Identity> identify(const std::uint8_t * data, std::size_t size) const;
+  std::optional<Identity> identify(
+    const std::uint8_t * data, std::size_t size, Vendor vendor_hint = Vendor::UNKNOWN) const;
 
-  std::optional<Identity> identify(const std::vector<std::uint8_t> & packet) const
+  std::optional<Identity> identify(
+    const std::vector<std::uint8_t> & packet, Vendor vendor_hint = Vendor::UNKNOWN) const
   {
-    return identify(packet.data(), packet.size());
+    return identify(packet.data(), packet.size(), vendor_hint);
   }
 };
 
