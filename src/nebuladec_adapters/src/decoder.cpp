@@ -1,5 +1,16 @@
 // Copyright 2026 TIER IV, Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "nebuladec_adapters/decoder.hpp"
 
@@ -27,23 +38,27 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
     case Vendor::SEYOND:
       return std::make_unique<adapters::SeyondAdapter>(identity);
     case Vendor::HESAI: {
-      auto adapter = std::make_unique<adapters::HesaiAdapter>(identity);
-      if (!adapter->is_ready()) {
-        return nullptr;
+        auto adapter = std::make_unique<adapters::HesaiAdapter>(identity);
+        if (!adapter->is_ready()) {
+          return nullptr;
+        }
+        return adapter;
       }
-      return adapter;
-    }
     case Vendor::VELODYNE: {
-      auto adapter = std::make_unique<adapters::VelodyneAdapter>(identity);
-      if (!adapter->is_ready()) {
-        return nullptr;
+        auto adapter = std::make_unique<adapters::VelodyneAdapter>(identity);
+        if (!adapter->is_ready()) {
+          return nullptr;
+        }
+        return adapter;
       }
-      return adapter;
-    }
     case Vendor::ROBOSENSE:
       // Robosense needs DIFOP to populate its calibration, so the
       // adapter is not yet is_ready() at construction. Returning it
       // anyway lets Decoder::feed_info() drive the initialisation.
+      // UNKNOWN model is rejected here since it can never become ready.
+      if (identity.model == nebula::drivers::SensorModel::UNKNOWN) {
+        return nullptr;
+      }
       return std::make_unique<adapters::RobosenseAdapter>(identity);
     case Vendor::UNKNOWN:
     default:
@@ -59,7 +74,8 @@ struct Decoder::Impl
   std::size_t min_points{1024};
 };
 
-Decoder::Decoder() : impl_(std::make_unique<Impl>())
+Decoder::Decoder()
+: impl_(std::make_unique<Impl>())
 {
 }
 Decoder::~Decoder() = default;
