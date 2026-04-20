@@ -6,7 +6,9 @@
     - source: .github/workflows/backport.yaml
     - source: .github/workflows/build-and-test.yaml
     - source: .github/workflows/build-and-test-differential.yaml
-    - source: .github/workflows/pre-commit.yaml
+    # pre-commit.yaml intentionally excluded: we run pre-commit as a pure
+    # check (no autofix-push) so the upstream template's GitHub-App token
+    # requirements do not apply. See .github/workflows/pre-commit.yaml.
     - source: .github/workflows/pre-commit-optional.yaml
     - source: .github/workflows/semantic-pull-request.yaml
     - source: .github/workflows/spell-check-daily.yaml
