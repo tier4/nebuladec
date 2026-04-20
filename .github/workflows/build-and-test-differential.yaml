@@ -10,21 +10,13 @@ on:
       - opened
       - synchronize
       - reopened
-      - labeled
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  require-label:
-    uses: autowarefoundation/autoware-github-actions/.github/workflows/require-label.yaml@v1
-    with:
-      label: run:build-and-test-differential
-
   build-and-test-differential:
-    needs: require-label
-    if: ${{ needs.require-label.outputs.result == 'true' }}
     runs-on: ubuntu-22.04
     container: ${{ matrix.container }}
     permissions:
