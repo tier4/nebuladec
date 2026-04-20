@@ -220,6 +220,37 @@ SeyondSensorModel seyond_model_from_lidar_type(std::uint8_t lidar_type)
   }
 }
 
+// Is the given `type:8` byte in SeyondDataPacket (offset 38, lower 8 bits
+// of the packed `type:8 | item_number:24` uint32) one of Nebula's known
+// data-packet item types?
+//
+// Values mirror the constants Nebula's seyond_decoder uses internally
+// (see nebula_seyond_decoders/src/seyond_decoder.cpp, ~line 85):
+//   1  = sphere_pointcloud
+//   5  = robine_sphere_pointcloud
+//   7  = robinw_sphere_pointcloud
+//   13 = robinw_compact_pointcloud
+//   19 = robine2x_compact_pointcloud
+//   22 = hummingbird_compact_pointcloud
+// Anything else is a status / message / log / coincidence: real sensors
+// emit those frames with `lidar_type=0` (FalconK) regardless of the
+// actual device, so accepting them into the sniff flow misidentifies
+// RobinW / Hummingbird streams as FalconK.
+bool is_seyond_data_item_type(std::uint8_t item_type)
+{
+  switch (item_type) {
+    case 1:
+    case 5:
+    case 7:
+    case 13:
+    case 19:
+    case 22:
+      return true;
+    default:
+      return false;
+  }
+}
+
 std::optional<Identity> sniff_hesai(const std::uint8_t * data, std::size_t size)
 {
   // Hesai — SOP 0xEEFF with variable size; Header12B starts at offset 0.
@@ -284,11 +315,32 @@ std::optional<Identity> sniff_robosense(const std::uint8_t * data, std::size_t s
 
 std::optional<Identity> sniff_seyond(const std::uint8_t * data, std::size_t size)
 {
-  // Seyond — distinctive magic in the first two bytes; lidar_type at
-  // byte offset 15 in SeyondPacketCommon identifies the sub-model.
-  constexpr std::size_t k_seyond_min_size = 26;  // sizeof(SeyondPacketCommon)
+  // Seyond packet identification is a two-step process:
+  //
+  //   1) Reject non-data packets. Every Seyond UDP frame -- data, status,
+  //      message, log -- shares the 0x176A magic and a SeyondPacketCommon
+  //      header. Real sensors have been observed emitting status frames
+  //      with `lidar_type=0` (FalconK) regardless of the actual device,
+  //      so identifying models off a raw magic hit misclassifies RobinW
+  //      / Hummingbird streams as FalconK. The `type:8` byte at offset
+  //      38 of SeyondDataPacket distinguishes data frames from the rest.
+  //   2) Read `lidar_type` at offset 15 of SeyondPacketCommon to resolve
+  //      the sub-model. We keep using this field (not item_type) because
+  //      its enum is wider -- e.g. RobinELITE (=Robin-E1X) corresponds
+  //      to lidar_type=5 but has no dedicated item_type in Nebula.
+  //
+  // Layout: SeyondPacketCommon (26 B) + idx (8) + sub_idx (2) + sub_seq
+  // (2) + packed `type:8 | item_number:24` (4) -> `type` at offset 38.
   constexpr std::size_t k_seyond_lidar_type_offset = 15;
+  constexpr std::size_t k_seyond_item_type_offset = 38;
+  constexpr std::size_t k_seyond_min_size = k_seyond_item_type_offset + 1;
   if (!has_seyond_magic(data, size) || size < k_seyond_min_size) {
+    return std::nullopt;
+  }
+  if (!is_seyond_data_item_type(data[k_seyond_item_type_offset])) {
+    // Status / message / log / coincidental-magic frame. Returning
+    // nullopt lets the caller keep any previously resolved Seyond
+    // identity and wait for a real data packet from the stream.
     return std::nullopt;
   }
   const SeyondSensorModel seyond_model =
