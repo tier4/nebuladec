@@ -56,6 +56,7 @@ struct Decoder::Impl
   PacketSniffer sniffer;
   std::optional<Identity> identity;
   std::unique_ptr<AnyDecoder> adapter;
+  std::size_t min_points{1024};
 };
 
 Decoder::Decoder() : impl_(std::make_unique<Impl>())
@@ -80,7 +81,11 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::feed(
     }
   }
 
-  return impl_->adapter->feed(packet, stamp_sec);
+  auto cloud = impl_->adapter->feed(packet, stamp_sec);
+  if (cloud && *cloud && (*cloud)->size() < impl_->min_points) {
+    return std::nullopt;
+  }
+  return cloud;
 }
 
 void Decoder::feed_info(const std::vector<std::uint8_t> & packet)
@@ -93,6 +98,16 @@ void Decoder::feed_info(const std::vector<std::uint8_t> & packet)
 std::optional<Identity> Decoder::identity() const
 {
   return impl_->identity;
+}
+
+void Decoder::set_min_points(std::size_t min_points)
+{
+  impl_->min_points = min_points;
+}
+
+std::size_t Decoder::min_points() const
+{
+  return impl_->min_points;
 }
 
 }  // namespace nebuladec

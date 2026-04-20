@@ -85,6 +85,21 @@ TEST(MakeAdapter, ReturnsNullForUnknownVendor)
   EXPECT_EQ(make_adapter(id), nullptr);
 }
 
+TEST(Decoder, MinPointsDefaultIs1024)
+{
+  Decoder decoder;
+  EXPECT_EQ(decoder.min_points(), 1024U);
+}
+
+TEST(Decoder, MinPointsSetterRoundTrips)
+{
+  Decoder decoder;
+  decoder.set_min_points(0);
+  EXPECT_EQ(decoder.min_points(), 0U);
+  decoder.set_min_points(10000);
+  EXPECT_EQ(decoder.min_points(), 10000U);
+}
+
 TEST(SeyondAdapter, FeedEmptyPacketReturnsNullopt)
 {
   Identity id;

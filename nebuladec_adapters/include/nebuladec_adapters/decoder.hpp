@@ -9,6 +9,7 @@
 #include <nebuladec_core/identity.hpp>
 #include <nebuladec_core/packet_sniffer.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -47,6 +48,16 @@ public:
   /// The resolved identity of the stream, once enough packets have been
   /// sniffed. Empty until the first identifiable packet is seen.
   std::optional<Identity> identity() const;
+
+  /// Minimum number of points a scan must contain to be surfaced from
+  /// feed(). Clouds with fewer points are silently dropped. Defaults to
+  /// 1024, which filters the first, partial-revolution scan that
+  /// Hesai / Velodyne / Robosense decoders emit when replay starts
+  /// mid-rotation. Pass 0 to disable the filter.
+  void set_min_points(std::size_t min_points);
+
+  /// The current minimum-points threshold.
+  [[nodiscard]] std::size_t min_points() const;
 
 private:
   struct Impl;
