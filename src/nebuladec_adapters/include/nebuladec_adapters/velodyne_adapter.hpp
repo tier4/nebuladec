@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace nebula::drivers
@@ -49,11 +50,21 @@ public:
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
 
+  /// Flush the final in-progress scan. Replays the cached first-scan
+  /// packets so the decoder's azimuth-wrap detector fires once more,
+  /// emitting the scan that would otherwise be stuck in `scan_pc_`.
+  std::optional<nebula::drivers::NebulaPointCloudPtr> flush() override;
+
   Identity identity() const override { return identity_; }
 
 private:
   Identity identity_;
   std::unique_ptr<nebula::drivers::VelodyneDriver> driver_;
+  /// Packets from the first full scan of the stream, captured until the
+  /// driver emits its first cloud. Replaying them during flush()
+  /// reproduces the original azimuth-wrap transition (cf. Hesai).
+  std::vector<std::pair<std::vector<std::uint8_t>, double>> first_scan_packets_;
+  bool first_scan_captured_{false};
 };
 
 }  // namespace nebuladec::adapters

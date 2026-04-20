@@ -23,6 +23,7 @@
 #include <nebuladec_bag/bag_io.hpp>
 #include <nebuladec_core/identity.hpp>
 #include <nebuladec_core/packet_sniffer.hpp>
+#include <third_party/tabulate.hpp>
 
 #include <cstdint>
 #include <cstdlib>
@@ -46,8 +47,9 @@ int print_usage(std::ostream & out)
          "\n"
          "subcommands:\n"
          "  inspect <path>\n"
-         "      Report vendor/model, packet counts, and scan counts for every\n"
-         "      packet topic found in the bag (LiDAR and Continental radar).\n"
+         "      Report vendor/model for every packet topic found in the\n"
+         "      bag (LiDAR and Continental radar). Reads only the first\n"
+         "      message per topic.\n"
          "\n"
          "  convert <input> -o <output> [options]\n"
          "      Decode packets from one LiDAR topic and write a sibling\n"
@@ -74,10 +76,36 @@ std::string format_identity(const std::optional<nebuladec::Identity> & id)
   }
   std::ostringstream os;
   os << nebuladec::to_string(id->vendor) << "/";
-  if (id->model == nebula::drivers::SensorModel::UNKNOWN) {
-    os << "unknown-model";
-  } else {
+  // Seyond carries its model in a separate enum (seyond_model) because
+  // SensorModel::UNKNOWN stays set even after the sniffer identifies a
+  // Seyond model. Fall through to that enum when the main one is blank.
+  if (id->model != nebula::drivers::SensorModel::UNKNOWN) {
     os << id->model;  // nebula_common.hpp overloads operator<< on ostream
+  } else if (id->seyond_model) {
+    os << *id->seyond_model;
+  } else {
+    os << "unknown-model";
+  }
+  return os.str();
+}
+
+std::string identity_vendor(const std::optional<nebuladec::Identity> & id)
+{
+  return id ? nebuladec::to_string(id->vendor) : "<unknown>";
+}
+
+std::string identity_model(const std::optional<nebuladec::Identity> & id)
+{
+  if (!id) {
+    return "<unknown>";
+  }
+  std::ostringstream os;
+  if (id->model != nebula::drivers::SensorModel::UNKNOWN) {
+    os << id->model;
+  } else if (id->seyond_model) {
+    os << *id->seyond_model;
+  } else {
+    return "<unknown>";
   }
   return os.str();
 }
@@ -94,19 +122,14 @@ int cmd_inspect(const std::vector<std::string> & argv)
       return k_exit_ok;
     }
     std::cout << "topics discovered: " << summary.topics.size() << "\n";
-    for (std::size_t i = 0; i < summary.topics.size(); ++i) {
-      const auto & t = summary.topics[i];
-      std::cout << "\n[" << (i + 1) << "/" << summary.topics.size() << "] " << t.topic << "\n";
-      std::cout << "  message type   : " << t.message_type << "\n";
-      std::cout << "  vendor (msg)   : " << nebuladec::to_string(t.vendor_by_message_type) << "\n";
-      std::cout << "  identity       : " << format_identity(t.identity) << "\n";
-      if (!t.info_topic.empty()) {
-        std::cout << "  info topic     : " << t.info_topic << "\n";
-      }
-      std::cout << "  data packets   : " << t.data_packets << "\n";
-      std::cout << "  info packets   : " << t.info_packets << "\n";
-      std::cout << "  clouds produced: " << t.clouds_produced << "\n";
+
+    tabulate::Table table;
+    table.add_row({"topic", "vendor", "model"});
+    for (const auto & t : summary.topics) {
+      table.add_row({t.topic, identity_vendor(t.identity), identity_model(t.identity)});
     }
+    table[0].format().font_style({tabulate::FontStyle::bold});
+    std::cout << table << "\n";
     return k_exit_ok;
   } catch (const std::exception & e) {
     std::cerr << "inspect failed: " << e.what() << "\n";

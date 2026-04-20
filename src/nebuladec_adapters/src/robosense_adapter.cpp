@@ -120,12 +120,44 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> RobosenseAdapter::feed(
     return std::nullopt;
   }
 
+  if (!first_scan_captured_) {
+    first_scan_packets_.push_back(packet);
+  }
+
   auto result = driver_->parse_cloud_packet(packet);
   auto & cloud = std::get<0>(result);
-  if (!cloud || cloud->empty()) {
+  const bool emitted = cloud && !cloud->empty();
+
+  if (!first_scan_captured_ && emitted) {
+    first_scan_captured_ = true;
+    first_scan_packets_.shrink_to_fit();
+  }
+
+  if (!emitted) {
     return std::nullopt;
   }
   return cloud;
+}
+
+std::optional<nebula::drivers::NebulaPointCloudPtr> RobosenseAdapter::flush()
+{
+  // RobosenseDecoder swaps `decode_pc_` into `output_pc_` only when the
+  // angle corrector detects a scan-phase crossing on the *next* packet.
+  // At end-of-bag the trailing scan never swaps out. Replaying the
+  // cached first-scan MSOPs reproduces the original crossing (those
+  // packets are known to have triggered one), and the driver surfaces
+  // the trailing cloud on the crossing packet.
+  if (!driver_ || first_scan_packets_.empty()) {
+    return std::nullopt;
+  }
+  for (const auto & pkt : first_scan_packets_) {
+    auto result = driver_->parse_cloud_packet(pkt);
+    auto & cloud = std::get<0>(result);
+    if (cloud && !cloud->empty()) {
+      return cloud;
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace nebuladec::adapters

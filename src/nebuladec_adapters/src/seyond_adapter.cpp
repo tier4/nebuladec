@@ -95,8 +95,48 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::feed(
     return std::nullopt;
   }
 
-  decoder_->unpack(packet);
+  if (!first_scan_captured_) {
+    first_scan_packets_.push_back(packet);
+  }
 
+  const auto result = decoder_->unpack(packet);
+  last_feed_scan_complete_ = result.scan_complete;
+
+  if (!first_scan_captured_ && !ready_clouds_.empty()) {
+    first_scan_captured_ = true;
+    first_scan_packets_.shrink_to_fit();
+  }
+
+  if (ready_clouds_.empty()) {
+    return std::nullopt;
+  }
+  auto cloud = std::move(ready_clouds_.front());
+  ready_clouds_.pop_front();
+  return cloud;
+}
+
+std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::flush()
+{
+  // SeyondDecoder emits the current scan either when the packet's
+  // frame_idx differs from the accumulating scan's (the "next-packet"
+  // path, same failure mode as mechanical LiDARs) or when the packet
+  // carries is_last_sub_frame=true (a self-signal that dodges the
+  // failure when the bag ends on a clean frame boundary). At end-of-
+  // bag neither path fires if the final packet was mid-frame.
+  //
+  // Skip flush when the final packet already emitted a scan -- in that
+  // case `current_scan_cloud_` is empty and replaying first-scan
+  // packets would synthesise a spurious duplicate of the first scan
+  // via the is_last_sub_frame path.
+  if (!decoder_ || first_scan_packets_.empty() || last_feed_scan_complete_) {
+    return std::nullopt;
+  }
+  for (const auto & pkt : first_scan_packets_) {
+    decoder_->unpack(pkt);
+    if (!ready_clouds_.empty()) {
+      break;
+    }
+  }
   if (ready_clouds_.empty()) {
     return std::nullopt;
   }

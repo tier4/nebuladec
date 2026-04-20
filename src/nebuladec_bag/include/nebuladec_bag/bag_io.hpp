@@ -43,25 +43,22 @@ struct InputSpec
 InputSpec detect_input(const std::string & path);
 
 /// @brief Per-topic result of an `inspect()` run.
+///
+/// `inspect()` only reads the first packet message per topic (plus the
+/// first unique info-topic message, for Robosense DIFOP), so callers get
+/// vendor + model quickly without walking the whole bag. Vendor is
+/// always derived from the sniffed model, never from the ROS 2 message
+/// type -- `nebula_msgs/NebulaPackets` is shared by Seyond and
+/// Continental, so the type alone does not pin down a vendor. Topics
+/// with zero ROS messages in the bag are omitted from the summary --
+/// they carry no information inspect() can report.
 struct TopicInspectResult
 {
   std::string topic;
-  std::string message_type;
-  /// Vendor derivable from the ROS 2 message type alone. `UNKNOWN` for
-  /// `nebula_msgs/NebulaPackets`, which needs packet-level sniffing.
-  Vendor vendor_by_message_type{Vendor::UNKNOWN};
-  /// Vendor + model resolved by feeding packets through the sniffer.
-  /// Empty when no packet could be identified (e.g. an empty topic).
+  /// Vendor + model resolved by feeding the first packet (and DIFOP, if
+  /// present) through the sniffer. Empty when the packet bytes could not
+  /// be identified by the sniffer.
   std::optional<Identity> identity;
-  std::size_t data_packets{0};
-  std::size_t info_packets{0};
-  std::size_t clouds_produced{0};
-  /// Robosense DIFOP topic paired with this packet topic. Only populated
-  /// when the packet vendor is Robosense and the bag has exactly one
-  /// info topic; with zero or multiple info topics pairing is ambiguous
-  /// and this stays empty. Topic names are never used to guess sensor
-  /// model -- model comes strictly from message type and packet bytes.
-  std::string info_topic;
 };
 
 /// @brief Summary of an `inspect()` run across all packet topics.
@@ -95,8 +92,6 @@ struct ConvertResult
   std::size_t data_packets{0};
   std::size_t info_packets{0};
   std::size_t clouds_written{0};
-  std::string packets_topic;
-  std::string info_topic;
 };
 
 /// Read `options.input_path`, decode every packet, and write a sibling

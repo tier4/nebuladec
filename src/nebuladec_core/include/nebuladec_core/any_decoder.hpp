@@ -43,6 +43,13 @@ public:
   /// other vendors.
   virtual void feed_info(const std::vector<std::uint8_t> & /*packet*/) {}
 
+  /// Flush any scan buffered inside the underlying driver at end-of-stream.
+  /// Mechanical-LiDAR decoders emit a cloud only once the *next* scan's
+  /// first packet crosses the cut angle, so the final scan of a bag is
+  /// otherwise stuck in the driver. Default is a no-op (nullopt) for
+  /// vendors / adapters that do not buffer across packets.
+  virtual std::optional<nebula::drivers::NebulaPointCloudPtr> flush() { return std::nullopt; }
+
   virtual Identity identity() const = 0;
 };
 
