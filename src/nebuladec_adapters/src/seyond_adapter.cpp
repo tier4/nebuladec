@@ -1,5 +1,16 @@
 // Copyright 2026 TIER IV, Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "nebuladec_adapters/seyond_adapter.hpp"
 
@@ -44,7 +55,8 @@ nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
   // the stream uses a variant Nebula does not model (e.g. RobinE2X).
   if (
     identity.seyond_model &&
-    *identity.seyond_model != nebula::drivers::SeyondSensorModel::UNKNOWN) {
+    *identity.seyond_model != nebula::drivers::SeyondSensorModel::UNKNOWN)
+  {
     return *identity.seyond_model;
   }
   return nebula::drivers::SeyondSensorModel::FALCON_K;
@@ -52,7 +64,8 @@ nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
 
 }  // namespace
 
-SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
+SeyondAdapter::SeyondAdapter(const Identity & identity)
+: identity_(identity)
 {
   nebula::drivers::SeyondSensorConfiguration config;
   config.sensor_model = pick_seyond_model(identity);
@@ -65,11 +78,11 @@ SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
   config.return_mode = nebula::drivers::ReturnMode::STRONGEST;
 
   auto callback = [this](
-                    nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
-    if (cloud && !cloud->empty()) {
-      ready_clouds_.push_back(std::move(cloud));
-    }
-  };
+    nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
+      if (cloud && !cloud->empty()) {
+        ready_clouds_.push_back(std::move(cloud));
+      }
+    };
 
   decoder_ = std::make_unique<nebula::drivers::SeyondDecoder>(
     config, callback, nebula::drivers::SeyondCalibrationData{});

@@ -1,5 +1,16 @@
 // Copyright 2026 TIER IV, Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "packet_source.hpp"
 
@@ -35,7 +46,7 @@ std::int64_t nsec(const builtin_interfaces::msg::Time & t)
   return static_cast<std::int64_t>(t.sec) * 1'000'000'000LL + static_cast<std::int64_t>(t.nanosec);
 }
 
-template <class Msg>
+template<class Msg>
 Msg deserialize(const rclcpp::SerializedMessage & serialized)
 {
   Msg out;
@@ -131,16 +142,26 @@ public:
 
 std::unique_ptr<PacketSource> make_packet_source(const std::string & type_name)
 {
-  if (type_name == k_nebula_packets) return std::make_unique<NebulaPacketsSource>();
-  if (type_name == k_pandar_scan) return std::make_unique<PandarScanSource>();
-  if (type_name == k_velodyne_scan) return std::make_unique<VelodyneScanSource>();
-  if (type_name == k_robosense_scan) return std::make_unique<RobosenseScanSource>();
+  if (type_name == k_nebula_packets) {
+    return std::make_unique<NebulaPacketsSource>();
+  }
+  if (type_name == k_pandar_scan) {
+    return std::make_unique<PandarScanSource>();
+  }
+  if (type_name == k_velodyne_scan) {
+    return std::make_unique<VelodyneScanSource>();
+  }
+  if (type_name == k_robosense_scan) {
+    return std::make_unique<RobosenseScanSource>();
+  }
   return nullptr;
 }
 
 std::unique_ptr<InfoSource> make_info_source(const std::string & type_name)
 {
-  if (type_name == k_robosense_info) return std::make_unique<RobosenseInfoSource>();
+  if (type_name == k_robosense_info) {
+    return std::make_unique<RobosenseInfoSource>();
+  }
   return nullptr;
 }
 

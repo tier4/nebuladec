@@ -1,5 +1,16 @@
 // Copyright 2026 TIER IV, Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "nebuladec_bag/bag_io.hpp"
 
@@ -42,8 +53,12 @@ namespace fs = std::filesystem;
 std::string storage_id_from_extension(const fs::path & file)
 {
   const auto ext = file.extension().string();
-  if (ext == ".mcap") return "mcap";
-  if (ext == ".db3") return "sqlite3";
+  if (ext == ".mcap") {
+    return "mcap";
+  }
+  if (ext == ".db3") {
+    return "sqlite3";
+  }
   return "";
 }
 
@@ -97,7 +112,7 @@ InputSpec detect_input(const std::string & path)
     const auto sid = storage_id_from_extension(p);
     if (sid.empty()) {
       throw std::invalid_argument(
-        "unknown storage extension (expected .mcap or .db3): " + p.string());
+              "unknown storage extension (expected .mcap or .db3): " + p.string());
     }
     return InputSpec{p.string(), sid, false};
   }
@@ -240,12 +255,12 @@ ConvertResult convert(const ConvertOptions & options)
   PipelineState state;
 
   auto sink = [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
-    if (!cloud || cloud->empty()) {
-      return;
-    }
-    const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), options.frame_id);
-    writer.write(pc_msg, options.output_topic, rclcpp::Time(stamp_ns));
-  };
+      if (!cloud || cloud->empty()) {
+        return;
+      }
+      const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), options.frame_id);
+      writer.write(pc_msg, options.output_topic, rclcpp::Time(stamp_ns));
+    };
 
   process_bag(reader, sel, state, sink);
 

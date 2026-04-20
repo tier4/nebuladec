@@ -1,5 +1,16 @@
 // Copyright 2026 TIER IV, Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "nebuladec_adapters/hesai_adapter.hpp"
 
@@ -144,7 +155,8 @@ std::shared_ptr<const HesaiSensorConfiguration> make_offline_config(
 
 }  // namespace
 
-HesaiAdapter::HesaiAdapter(const Identity & identity) : identity_(identity)
+HesaiAdapter::HesaiAdapter(const Identity & identity)
+: identity_(identity)
 {
   if (identity.model == SensorModel::UNKNOWN) {
     return;  // Not enough to pick a decoder/calibration; is_ready() stays false.
@@ -158,11 +170,11 @@ HesaiAdapter::HesaiAdapter(const Identity & identity) : identity_(identity)
   auto config = make_offline_config(identity.model, identity.return_mode);
 
   auto callback = [this](
-                    const nebula::drivers::NebulaPointCloudPtr & cloud, double /*timestamp_s*/) {
-    if (cloud && !cloud->empty()) {
-      ready_clouds_.push_back(cloud);
-    }
-  };
+    const nebula::drivers::NebulaPointCloudPtr & cloud, double /*timestamp_s*/) {
+      if (cloud && !cloud->empty()) {
+        ready_clouds_.push_back(cloud);
+      }
+    };
 
   try {
     auto logger = std::make_shared<nebula::drivers::loggers::ConsoleLogger>("nebuladec.hesai");
