@@ -42,6 +42,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_robosense_adapter test/test_robosense_adapter.cpp)
   target_link_libraries(test_robosense_adapter ${PROJECT_NAME})
+
+  ament_add_gtest(test_decoder_integration test/test_decoder_integration.cpp)
+  target_link_libraries(test_decoder_integration ${PROJECT_NAME})
 endif()
 
 ament_auto_package()
