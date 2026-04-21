@@ -282,25 +282,31 @@ void feed_info_to_targets(
 /// entry would only add noise.
 InspectSummary build_summary(
   const std::vector<PacketTopicSpec> & packet_order, const TopicStateMap & topic_states,
-  const std::unordered_set<std::string> & topics_with_messages)
+  const std::unordered_set<std::string> & topics_with_messages,
+  const std::vector<InfoTopicSpec> & info_specs)
 {
   InspectSummary summary;
   summary.topics.reserve(packet_order.size());
   // Preserve bag metadata order so repeated inspect() calls are stable.
+  // Zero-message topics are kept (with identity unset + has_messages
+  // false) so `plan_convert()` can emit "skipped: no messages" for them
+  // without having to re-walk the bag metadata.
   for (const auto & pt : packet_order) {
-    if (!topics_with_messages.count(pt.topic)) {
-      continue;
-    }
-    auto it = topic_states.find(pt.topic);
-    if (it == topic_states.end()) {
-      continue;
-    }
-    const auto & state = it->second;
-
     TopicInspectResult result;
-    result.topic = state.topic;
-    result.identity = state.sniffed_identity;
+    result.topic = pt.topic;
+    result.has_messages = topics_with_messages.count(pt.topic) > 0;
+    if (auto it = topic_states.find(pt.topic); it != topic_states.end()) {
+      result.identity = it->second.sniffed_identity;
+    }
     summary.topics.push_back(std::move(result));
+  }
+  summary.info_topics.reserve(info_specs.size());
+  for (const auto & info : info_specs) {
+    InfoTopicInspect it;
+    it.topic = info.topic;
+    it.type = info.type;
+    it.has_messages = topics_with_messages.count(info.topic) > 0;
+    summary.info_topics.push_back(std::move(it));
   }
   return summary;
 }
@@ -519,7 +525,7 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
     }
   }
 
-  return build_summary(packet_order, topic_states, topics_with_messages);
+  return build_summary(packet_order, topic_states, topics_with_messages, info_specs);
 }
 
 }  // namespace
@@ -694,11 +700,12 @@ InspectSummary inspect(const std::string & input_path)
 
   std::unordered_set<std::string> topics_with_messages;
   for (const auto & [name, count] : message_counts) {
-    if (count > 0 && topic_states.count(name)) {
+    if (count > 0) {
       topics_with_messages.insert(name);
     }
   }
-  return build_summary(discovered.packet_topics, topic_states, topics_with_messages);
+  return build_summary(
+    discovered.packet_topics, topic_states, topics_with_messages, discovered.info_topics);
 }
 
 namespace
@@ -747,9 +754,14 @@ std::vector<ConvertPlanEntry> plan_convert(
   const std::string & input_path, const TopicMapping & mapping)
 {
   // Reuse inspect() so dry-run sees the same sniffed identities as the
-  // full convert() flow. inspect() already discovers every packet topic
-  // and reports vendor/model.
+  // full convert() flow. inspect() reports every packet topic (including
+  // zero-message ones) and every info topic present in the bag.
   const auto summary = inspect(input_path);
+
+  std::unordered_set<std::string> info_topics_in_bag;
+  for (const auto & info : summary.info_topics) {
+    info_topics_in_bag.insert(info.topic);
+  }
 
   std::vector<ConvertPlanEntry> entries;
   entries.reserve(summary.topics.size());
@@ -757,15 +769,49 @@ std::vector<ConvertPlanEntry> plan_convert(
     ConvertPlanEntry entry;
     entry.in_topic = t.topic;
     entry.identity = t.identity;
+
+    // Order matters: data-level reasons ("no messages", "unsupported
+    // vendor") short-circuit before mapping resolution because a topic
+    // with no data or no decoder support cannot produce clouds even if
+    // it matches a rule.
+    if (!t.has_messages) {
+      entry.status = "skipped";
+      entry.message = "no messages";
+      entries.push_back(std::move(entry));
+      continue;
+    }
+    if (!t.identity) {
+      entry.status = "skipped";
+      entry.message = "unsupported vendor (unknown)";
+      entries.push_back(std::move(entry));
+      continue;
+    }
+    if (t.identity->vendor == Vendor::CONTINENTAL) {
+      entry.status = "skipped";
+      entry.message = "unsupported vendor (continental radar)";
+      entries.push_back(std::move(entry));
+      continue;
+    }
+    if (t.identity->vendor == Vendor::UNKNOWN) {
+      entry.status = "skipped";
+      entry.message = "unsupported vendor (unknown)";
+      entries.push_back(std::move(entry));
+      continue;
+    }
+
     try {
       auto match = mapping.resolve(t.topic);
-      if (match) {
+      if (!match) {
+        entry.status = "skipped";
+        entry.message = "no matching rule";
+      } else if (!match->info_topic.empty() && !info_topics_in_bag.count(match->info_topic)) {
+        entry.status = "error";
+        entry.message = "info topic '" + match->info_topic + "' not in bag";
+      } else {
         entry.out_topic = match->out_topic;
         entry.frame_id = match->frame_id;
         entry.info_topic = match->info_topic;
         entry.status = "ok";
-      } else {
-        entry.status = "skipped";
       }
     } catch (const std::runtime_error & e) {
       entry.status = "error";

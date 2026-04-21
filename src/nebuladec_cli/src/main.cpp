@@ -118,13 +118,32 @@ int cmd_inspect(const std::vector<std::string> & argv)
       std::cout << "no Nebula packet topics found in bag\n";
       return k_exit_ok;
     }
-    std::cout << "topics discovered: " << summary.topics.size() << "\n";
 
     tabulate::Table table;
     table.add_row({"topic", "vendor", "model"});
+    // inspect's CLI hides zero-message topics to preserve the established
+    // UX ("tell me what's in this bag"). plan_convert / dry-run shows
+    // them with an explicit `skipped: no messages` row instead.
+    std::size_t visible = 0;
+    std::size_t hidden_empty = 0;
     for (const auto & t : summary.topics) {
+      if (!t.has_messages) {
+        ++hidden_empty;
+        continue;
+      }
       table.add_row({t.topic, identity_vendor(t.identity), identity_model(t.identity)});
+      ++visible;
     }
+    if (visible == 0) {
+      std::cout << "no Nebula packet topics with messages in bag (" << hidden_empty
+                << " empty topic(s) hidden)\n";
+      return k_exit_ok;
+    }
+    std::cout << "topics discovered: " << visible;
+    if (hidden_empty > 0) {
+      std::cout << " (" << hidden_empty << " empty topic(s) hidden)";
+    }
+    std::cout << "\n";
     table[0].format().font_style({tabulate::FontStyle::bold});
     std::cout << table << "\n";
     return k_exit_ok;
@@ -204,15 +223,16 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
   std::size_t skipped_count = 0;
   std::size_t error_count = 0;
   for (const auto & e : entries) {
+    const bool no_messages = (e.status == "skipped" && e.message == "no messages");
+    const std::string vendor_cell = no_messages ? "not available" : identity_vendor(e.identity);
+    const std::string model_cell = no_messages ? "not available" : identity_model(e.identity);
     const std::string out = e.status == "ok" ? e.out_topic : std::string{"-"};
     const std::string frame = e.status == "ok" ? e.frame_id : std::string{"-"};
     std::string status_cell = e.status;
     if (!e.message.empty()) {
       status_cell += ": " + e.message;
     }
-    table.add_row(
-      {e.in_topic, identity_vendor(e.identity), identity_model(e.identity), out, frame,
-       status_cell});
+    table.add_row({e.in_topic, vendor_cell, model_cell, out, frame, status_cell});
     if (e.status == "ok") {
       ++ok_count;
     } else if (e.status == "skipped") {

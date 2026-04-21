@@ -51,21 +51,38 @@ InputSpec detect_input(const std::string & path);
 /// always derived from the sniffed model, never from the ROS 2 message
 /// type -- `nebula_msgs/NebulaPackets` is shared by Seyond and
 /// Continental, so the type alone does not pin down a vendor. Topics
-/// with zero ROS messages in the bag are omitted from the summary --
-/// they carry no information inspect() can report.
+/// with zero ROS messages in the bag are reported with `message_count=0`
+/// and `identity` unset; `inspect()`'s own CLI filters those out, but
+/// `plan_convert()` surfaces them so the dry-run table can explain
+/// exactly why a topic will be skipped.
 struct TopicInspectResult
 {
   std::string topic;
   /// Vendor + model resolved by feeding the first packet (and DIFOP, if
   /// present) through the sniffer. Empty when the packet bytes could not
-  /// be identified by the sniffer.
+  /// be identified by the sniffer or when the topic has zero messages.
   std::optional<Identity> identity;
+  /// Whether the topic had at least one message in the bag. False means
+  /// no sniffing was attempted; `identity` will be empty.
+  bool has_messages{false};
 };
 
-/// @brief Summary of an `inspect()` run across all packet topics.
+/// @brief Info topic discovered by `inspect()` (Robosense DIFOP, etc.).
+struct InfoTopicInspect
+{
+  std::string topic;
+  std::string type;
+  bool has_messages{false};
+};
+
+/// @brief Summary of an `inspect()` run across all packet / info topics.
 struct InspectSummary
 {
   std::vector<TopicInspectResult> topics;
+  /// Info topics present in the bag. Exposed so `plan_convert()` can
+  /// validate that every `info_topic` a mapping rule requires actually
+  /// exists without opening the bag a second time.
+  std::vector<InfoTopicInspect> info_topics;
 };
 
 /// Open `input_path`, auto-discover every Nebula packet topic (LiDAR and
