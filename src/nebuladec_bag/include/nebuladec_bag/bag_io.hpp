@@ -121,10 +121,15 @@ struct TopicConvertResult
 /// @brief Aggregate result for a `convert()` run.
 struct ConvertResult
 {
+  /// Topics that were decoded end-to-end into PointCloud2.
   std::vector<TopicConvertResult> topics;
-  /// Packet topics present in the bag that matched no mapping rule. Kept
-  /// so CLI code can warn the user about likely config gaps.
-  std::vector<std::string> skipped_topics;
+  /// Topics that were copied verbatim from the input bag to the output
+  /// bag. This includes every topic that was NOT in `topics`: packet
+  /// topics that matched no rule, packet topics whose vendor/model is
+  /// not supported, info topics, and any unrelated streams (TF, IMU,
+  /// camera, ...). Exposed so the CLI can report how much data was
+  /// preserved alongside the decoded output.
+  std::vector<std::string> passthrough_topics;
 };
 
 /// @brief One row of a convert dry-run plan.
@@ -154,13 +159,15 @@ std::vector<ConvertPlanEntry> plan_convert(
   const std::string & input_path, const TopicMapping & mapping);
 
 /// Read `options.input_path`, decode every packet-topic that matches
-/// `options.mapping`, and write the resolved PointCloud2 topics to
-/// `options.output_path`. The output bag uses the same storage plugin
-/// and file/directory layout as the input.
+/// `options.mapping` AND whose vendor/model is supported, and write the
+/// resolved PointCloud2 topics to `options.output_path`. Every other
+/// topic in the input bag (unmatched packet topics, unsupported-vendor
+/// packet topics, Robosense info topics, TF, IMU, camera streams, ...)
+/// is preserved verbatim in the output bag. The output bag uses the
+/// same storage plugin and file/directory layout as the input.
 ///
-/// Packet topics that match no rule are skipped (and reported back via
-/// `ConvertResult::skipped_topics`). Throws `std::runtime_error` when a
-/// single in-topic matches multiple rules (ambiguous config).
+/// Throws `std::runtime_error` when a single in-topic matches multiple
+/// rules (ambiguous config).
 ConvertResult convert(const ConvertOptions & options);
 
 }  // namespace nebuladec::bag

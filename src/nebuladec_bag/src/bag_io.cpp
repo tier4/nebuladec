@@ -831,26 +831,57 @@ ConvertResult convert(const ConvertOptions & options)
 {
   const auto in_spec = detect_input(options.input_path);
 
+  // Phase 1: quick inspect to learn each packet topic's sniffed identity
+  // before we open the main reader. Decoding vs passthrough hinges on
+  // `SupportRegistry::check(identity)`: a topic that matches a mapping
+  // rule but whose vendor/model is not supported is demoted to
+  // passthrough instead of producing an empty PointCloud2 topic.
+  const auto summary = inspect(options.input_path);
+  std::unordered_map<std::string, std::optional<Identity>> identity_by_topic;
+  for (const auto & t : summary.topics) {
+    identity_by_topic.emplace(t.topic, t.identity);
+  }
+
   rosbag2_cpp::Reader reader;
   reader.open(to_storage_options(in_spec));
 
   const auto discovered = discover_topics(reader);
   auto partition = resolve_discovered_topics(discovered.packet_topics, options.mapping);
 
-  if (partition.resolved.empty()) {
-    ConvertResult empty;
-    empty.skipped_topics = std::move(partition.skipped);
-    return empty;
+  // Filter mapping-matched topics by the SupportRegistry. Topics the
+  // registry rejects are demoted to passthrough so their raw packets
+  // still land in the output bag (Continental radar, unidentified
+  // streams, etc.).
+  const auto & registry = SupportRegistry::instance();
+  std::vector<ResolvedRule> decoded_rules;
+  decoded_rules.reserve(partition.resolved.size());
+  std::vector<std::string> demoted_topics;
+  for (auto & r : partition.resolved) {
+    std::optional<Identity> id;
+    if (auto it = identity_by_topic.find(r.in_topic); it != identity_by_topic.end()) {
+      id = it->second;
+    }
+    if (registry.check(id).level == SupportLevel::Supported) {
+      decoded_rules.push_back(std::move(r));
+    } else {
+      demoted_topics.push_back(r.in_topic);
+    }
   }
 
-  // Validate that every info_topic promised by a matched rule actually
-  // exists in the bag. Failing fast here is much less confusing than
-  // silently producing zero info_packets for a Robosense stream.
+  std::unordered_set<std::string> decoded_topic_names;
+  decoded_topic_names.reserve(decoded_rules.size());
+  for (const auto & r : decoded_rules) {
+    decoded_topic_names.insert(r.in_topic);
+  }
+
+  // Validate that every info_topic promised by a decoded rule actually
+  // exists in the bag. Demoted rules are not validated -- their packets
+  // are passthrough only, no info feed is needed.
   std::unordered_map<std::string, std::string> info_topic_to_type;
   for (const auto & it : discovered.info_topics) {
     info_topic_to_type.emplace(it.topic, it.type);
   }
-  for (const auto & r : partition.resolved) {
+  for (const auto & r : decoded_rules) {
     if (r.match.info_topic.empty()) {
       continue;
     }
@@ -859,6 +890,15 @@ ConvertResult convert(const ConvertOptions & options)
         "info topic '" + r.match.info_topic + "' (required by rule for '" + r.in_topic +
         "') not found in bag");
     }
+  }
+
+  // Snapshot every topic in the bag with its original metadata so we
+  // can recreate it verbatim on the output side (everything that is
+  // not a decoded packet topic gets copied through unchanged).
+  std::vector<rosbag2_storage::TopicMetadata> all_topic_metadata;
+  all_topic_metadata.reserve(reader.get_metadata().topics_with_message_count.size());
+  for (const auto & info : reader.get_metadata().topics_with_message_count) {
+    all_topic_metadata.push_back(info.topic_metadata);
   }
 
   // Mirror the input's file-vs-directory layout on the output side.
@@ -899,6 +939,7 @@ ConvertResult convert(const ConvertOptions & options)
   std::unordered_map<std::string, std::unique_ptr<InfoSource>> info_sources;  // info -> source
   std::unordered_map<std::string, std::vector<std::string>> info_targets;     // info -> in_topics
   std::unordered_set<std::string> created_out_topics;
+  std::vector<std::string> passthrough_topics;  // declared for result; filled below.
 
   {
     rosbag2_cpp::Writer writer;
@@ -907,7 +948,8 @@ ConvertResult convert(const ConvertOptions & options)
     out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
     writer.open(out_opts);
 
-    for (const auto & r : partition.resolved) {
+    // 1) Create PointCloud2 output topics for every decoded rule.
+    for (const auto & r : decoded_rules) {
       const auto vendor_hint = vendor_from_message_type(r.type);
 
       // Guard against two rules resolving to the same output topic with
@@ -949,6 +991,20 @@ ConvertResult convert(const ConvertOptions & options)
       }
     }
 
+    // 2) Create passthrough topics for everything else, preserving the
+    // original type and serialization_format. Info topics that feed a
+    // decoded rule are still passed through -- their raw bytes belong to
+    // the bag regardless of whether they were also used by a decoder.
+    std::unordered_set<std::string> passthrough_topic_set;
+    for (const auto & meta : all_topic_metadata) {
+      if (decoded_topic_names.count(meta.name)) {
+        continue;
+      }
+      writer.create_topic(meta);
+      passthrough_topic_set.insert(meta.name);
+      passthrough_topics.push_back(meta.name);
+    }
+
     auto sink = [&](
                   const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
                   std::int64_t stamp_ns) {
@@ -963,6 +1019,10 @@ ConvertResult convert(const ConvertOptions & options)
 
     while (reader.has_next()) {
       auto bag_msg = reader.read_next();
+
+      // 3a) Decoded packet topic: decode and emit PointCloud2; the raw
+      // packet is NOT passed through -- the PointCloud2 output replaces
+      // it by design.
       if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
         if (!it->second.packet_source) {
           continue;
@@ -980,20 +1040,31 @@ ConvertResult convert(const ConvertOptions & options)
         }
         continue;
       }
+
+      // 3b) Info topic used by a decoded rule: feed the decoder AND
+      // fall through to passthrough below so the original info bytes
+      // are preserved in the output bag.
       if (auto it = info_sources.find(bag_msg->topic_name); it != info_sources.end()) {
         rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
         auto info_bytes = it->second->extract(serialized);
-        if (info_bytes.empty()) {
-          continue;
-        }
-        for (const auto & target : info_targets[bag_msg->topic_name]) {
-          auto ts_it = states.find(target);
-          if (ts_it == states.end()) {
-            continue;
+        if (!info_bytes.empty()) {
+          for (const auto & target : info_targets[bag_msg->topic_name]) {
+            auto ts_it = states.find(target);
+            if (ts_it == states.end()) {
+              continue;
+            }
+            ++ts_it->second.info_packets;
+            ts_it->second.decoder.feed_info(info_bytes);
           }
-          ++ts_it->second.info_packets;
-          ts_it->second.decoder.feed_info(info_bytes);
         }
+      }
+
+      // 3c) Passthrough: write the serialized message verbatim under
+      // its original topic name. Covers info topics (fallthrough from
+      // 3b), unmatched packet topics, demoted packet topics, and any
+      // unrelated streams (TF, IMU, camera, ...).
+      if (passthrough_topic_set.count(bag_msg->topic_name)) {
+        writer.write(bag_msg);
       }
     }
 
@@ -1033,8 +1104,8 @@ ConvertResult convert(const ConvertOptions & options)
   }
 
   ConvertResult result;
-  result.topics.reserve(partition.resolved.size());
-  for (const auto & r : partition.resolved) {
+  result.topics.reserve(decoded_rules.size());
+  for (const auto & r : decoded_rules) {
     const auto & state = states.at(r.in_topic);
     TopicConvertResult tr;
     tr.in_topic = r.in_topic;
@@ -1047,7 +1118,7 @@ ConvertResult convert(const ConvertOptions & options)
     tr.clouds_written = state.clouds_produced;
     result.topics.push_back(std::move(tr));
   }
-  result.skipped_topics = std::move(partition.skipped);
+  result.passthrough_topics = std::move(passthrough_topics);
   return result;
 }
 

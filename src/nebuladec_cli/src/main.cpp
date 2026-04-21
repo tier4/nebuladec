@@ -292,17 +292,17 @@ int cmd_convert(const std::vector<std::string> & argv)
     options.mapping = std::move(mapping);
     const auto result = nebuladec::bag::convert(options);
 
-    if (!result.skipped_topics.empty()) {
-      std::cerr << "skipped " << result.skipped_topics.size()
-                << " packet topic(s) that matched no mapping rule:\n";
-      for (const auto & t : result.skipped_topics) {
+    if (!result.passthrough_topics.empty()) {
+      std::cerr << "preserved " << result.passthrough_topics.size()
+                << " topic(s) verbatim via passthrough:\n";
+      for (const auto & t : result.passthrough_topics) {
         std::cerr << "  " << t << "\n";
       }
     }
 
     if (result.topics.empty()) {
-      std::cerr << "no packet topic matched any mapping rule; output bag is empty\n";
-      return k_exit_runtime;
+      std::cerr << "no packet topic was decoded; output bag contains passthrough data only\n";
+      // Passthrough-only output is still a valid result, not a failure.
     }
 
     tabulate::Table table;
