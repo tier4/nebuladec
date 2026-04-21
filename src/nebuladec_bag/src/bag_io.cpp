@@ -787,19 +787,19 @@ std::vector<ConvertPlanEntry> plan_convert(
     const auto support = registry.check(t.identity);
     if (support.level == SupportLevel::VendorUnknown) {
       entry.status = "skipped";
-      entry.message = "unknown vendor (" + support.reason + ")";
+      entry.message = "unknown vendor";
       entries.push_back(std::move(entry));
       continue;
     }
     if (support.level == SupportLevel::VendorNotSupported) {
       entry.status = "skipped";
-      entry.message = "vendor not supported (" + support.reason + ")";
+      entry.message = "vendor not supported";
       entries.push_back(std::move(entry));
       continue;
     }
     if (support.level == SupportLevel::ModelNotSupported) {
       entry.status = "skipped";
-      entry.message = "model not supported (" + support.reason + ")";
+      entry.message = "model not supported";
       entries.push_back(std::move(entry));
       continue;
     }
@@ -818,9 +818,12 @@ std::vector<ConvertPlanEntry> plan_convert(
         entry.info_topic = match->info_topic;
         entry.status = "ok";
       }
-    } catch (const std::runtime_error & e) {
+    } catch (const std::runtime_error &) {
+      // TopicMapping::resolve only throws for duplicate-rule match. Keep
+      // the dry-run cell short; the full library message is only useful
+      // when convert() itself surfaces the exception.
       entry.status = "error";
-      entry.message = e.what();
+      entry.message = "multiple rules match";
     }
     entries.push_back(std::move(entry));
   }
