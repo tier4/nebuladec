@@ -224,8 +224,8 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
   std::size_t error_count = 0;
   for (const auto & e : entries) {
     const bool no_messages = (e.status == "skipped" && e.message == "no messages");
-    const std::string vendor_cell = no_messages ? "not available" : identity_vendor(e.identity);
-    const std::string model_cell = no_messages ? "not available" : identity_model(e.identity);
+    const std::string vendor_cell = no_messages ? std::string{"-"} : identity_vendor(e.identity);
+    const std::string model_cell = no_messages ? std::string{"-"} : identity_model(e.identity);
     const std::string out = e.status == "ok" ? e.out_topic : std::string{"-"};
     const std::string frame = e.status == "ok" ? e.frame_id : std::string{"-"};
     std::string status_cell = e.status;
