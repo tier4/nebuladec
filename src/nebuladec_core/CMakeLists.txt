@@ -16,6 +16,7 @@ ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/packet_sniffer.cpp
+  src/support_registry.cpp
   src/topic_mapping.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -36,6 +37,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_topic_mapping test/test_topic_mapping.cpp)
   target_link_libraries(test_topic_mapping ${PROJECT_NAME})
+
+  ament_add_gtest(test_support_registry test/test_support_registry.cpp)
+  target_link_libraries(test_support_registry ${PROJECT_NAME})
 endif()
 
 ament_auto_package()

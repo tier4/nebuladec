@@ -18,6 +18,7 @@
 #include "packet_source.hpp"
 
 #include <nebuladec_adapters/decoder.hpp>
+#include <nebuladec_core/support_registry.hpp>
 #include <rclcpp/serialization.hpp>
 #include <rclcpp/serialized_message.hpp>
 #include <rclcpp/time.hpp>
@@ -771,30 +772,34 @@ std::vector<ConvertPlanEntry> plan_convert(
     entry.identity = t.identity;
 
     // Order matters: data-level reasons ("no messages", "unsupported
-    // vendor") short-circuit before mapping resolution because a topic
-    // with no data or no decoder support cannot produce clouds even if
-    // it matches a rule.
+    // vendor/model") short-circuit before mapping resolution because a
+    // topic with no data or no decoder support cannot produce clouds
+    // even if it matches a rule. All vendor/model support questions go
+    // through `SupportRegistry` so this file never has to know which
+    // specific vendors or models are decodable.
     if (!t.has_messages) {
       entry.status = "skipped";
       entry.message = "no messages";
       entries.push_back(std::move(entry));
       continue;
     }
-    if (!t.identity) {
+    const auto & registry = SupportRegistry::instance();
+    const auto support = registry.check(t.identity);
+    if (support.level == SupportLevel::VendorUnknown) {
       entry.status = "skipped";
-      entry.message = "unsupported vendor (unknown)";
+      entry.message = "unknown vendor (" + support.reason + ")";
       entries.push_back(std::move(entry));
       continue;
     }
-    if (t.identity->vendor == Vendor::CONTINENTAL) {
+    if (support.level == SupportLevel::VendorNotSupported) {
       entry.status = "skipped";
-      entry.message = "unsupported vendor (continental radar)";
+      entry.message = "vendor not supported (" + support.reason + ")";
       entries.push_back(std::move(entry));
       continue;
     }
-    if (t.identity->vendor == Vendor::UNKNOWN) {
+    if (support.level == SupportLevel::ModelNotSupported) {
       entry.status = "skipped";
-      entry.message = "unsupported vendor (unknown)";
+      entry.message = "model not supported (" + support.reason + ")";
       entries.push_back(std::move(entry));
       continue;
     }
