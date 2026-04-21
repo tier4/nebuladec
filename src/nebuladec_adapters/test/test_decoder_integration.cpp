@@ -59,8 +59,9 @@ std::vector<std::uint8_t> make_velodyne_vlp16_packet()
 std::vector<std::uint8_t> make_seyond_stub_packet(std::size_t size = 512)
 {
   std::vector<std::uint8_t> pkt(size, 0);
-  pkt[0] = 0x6A;  // magic_number low  (uint16 LE == 0x176A)
-  pkt[1] = 0x17;  // magic_number high
+  pkt[0] = 0x6A;   // magic_number low  (uint16 LE == 0x176A)
+  pkt[1] = 0x17;   // magic_number high
+  pkt[38] = 0x01;  // type:8 == sphere_pointcloud (SeyondDataPacket data frame)
   return pkt;
 }
 

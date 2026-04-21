@@ -28,14 +28,17 @@ namespace
 {
 
 // Synthesize a Seyond data packet whose common header passes the sniffer's
-// magic check. The payload remains zero-filled; SeyondDecoder will reject
-// it internally (size mismatch) which is fine — the adapter's job in this
-// test is to accept, forward, and not crash.
+// magic check AND carries a data-packet item_type (the sniffer rejects
+// status/message/log frames since 2026-04). The payload remains mostly
+// zero-filled; SeyondDecoder will reject it internally (size mismatch)
+// which is fine — the adapter's job in this test is to accept, forward,
+// and not crash.
 std::vector<std::uint8_t> make_seyond_stub_packet(std::size_t size = 512)
 {
   std::vector<std::uint8_t> pkt(size, 0);
-  pkt[0] = 0x6A;  // magic_number low byte  (uint16 LE 0x176A)
-  pkt[1] = 0x17;  // magic_number high byte
+  pkt[0] = 0x6A;   // magic_number low byte  (uint16 LE 0x176A)
+  pkt[1] = 0x17;   // magic_number high byte
+  pkt[38] = 0x01;  // type:8 == sphere_pointcloud (SeyondDataPacket data frame)
   return pkt;
 }
 
