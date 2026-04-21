@@ -16,6 +16,7 @@ ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/packet_sniffer.cpp
+  src/topic_mapping.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -32,6 +33,9 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_packet_sniffer test/test_packet_sniffer.cpp)
   target_link_libraries(test_packet_sniffer ${PROJECT_NAME})
+
+  ament_add_gtest(test_topic_mapping test/test_topic_mapping.cpp)
+  target_link_libraries(test_topic_mapping ${PROJECT_NAME})
 endif()
 
 ament_auto_package()

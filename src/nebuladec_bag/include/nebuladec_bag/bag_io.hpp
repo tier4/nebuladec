@@ -16,6 +16,7 @@
 #define NEBULADEC_BAG__BAG_IO_HPP_
 
 #include <nebuladec_core/identity.hpp>
+#include <nebuladec_core/topic_mapping.hpp>
 
 #include <cstddef>
 #include <optional>
@@ -74,29 +75,75 @@ struct InspectSummary
 InspectSummary inspect(const std::string & input_path);
 
 /// @brief Options accepted by `convert()`.
+///
+/// The set of (in_topic -> out_topic, frame_id, info_topic) pairs is
+/// driven entirely by `mapping`; no CLI overrides exist for individual
+/// topics. Packet topics in the bag that match no rule are skipped and
+/// logged by the caller.
 struct ConvertOptions
 {
   std::string input_path;
   std::string output_path;
-  std::string output_topic{"/nebuladec/pointcloud"};
-  std::string frame_id{"lidar"};
-  /// When unset, the packet topic is auto-discovered from the bag.
-  std::optional<std::string> packets_topic;
-  /// When unset, Robosense info topic is auto-discovered.
-  std::optional<std::string> info_topic;
+  TopicMapping mapping;
 };
 
-struct ConvertResult
+/// @brief Per-in-topic conversion statistics produced by `convert()`.
+struct TopicConvertResult
 {
+  std::string in_topic;
+  std::string out_topic;
+  std::string frame_id;
+  /// Empty when the matched rule had no `info_topic`.
+  std::string info_topic;
   std::optional<Identity> identity;
   std::size_t data_packets{0};
   std::size_t info_packets{0};
   std::size_t clouds_written{0};
 };
 
-/// Read `options.input_path`, decode every packet, and write a sibling
-/// PointCloud2 topic to `options.output_path`. The output bag uses the
-/// same storage plugin and file/directory layout as the input.
+/// @brief Aggregate result for a `convert()` run.
+struct ConvertResult
+{
+  std::vector<TopicConvertResult> topics;
+  /// Packet topics present in the bag that matched no mapping rule. Kept
+  /// so CLI code can warn the user about likely config gaps.
+  std::vector<std::string> skipped_topics;
+};
+
+/// @brief One row of a convert dry-run plan.
+///
+/// `status` values:
+///   * "ok"      -- the in_topic matched exactly one rule and would be
+///                  converted; `out_topic`, `frame_id`, and optional
+///                  `info_topic` are filled in.
+///   * "skipped" -- the in_topic matched no rule; other fields are empty.
+///   * "error"   -- the in_topic matched multiple rules; `message`
+///                  carries the diagnostic and other fields are empty.
+struct ConvertPlanEntry
+{
+  std::string in_topic;
+  std::string out_topic;
+  std::string frame_id;
+  std::string info_topic;
+  std::optional<Identity> identity;
+  std::string status;
+  std::string message;
+};
+
+/// Resolve every packet topic discovered in `input_path` against `mapping`
+/// without reading beyond what `inspect()` needs. Returns one entry per
+/// packet topic present in the bag, preserving metadata order.
+std::vector<ConvertPlanEntry> plan_convert(
+  const std::string & input_path, const TopicMapping & mapping);
+
+/// Read `options.input_path`, decode every packet-topic that matches
+/// `options.mapping`, and write the resolved PointCloud2 topics to
+/// `options.output_path`. The output bag uses the same storage plugin
+/// and file/directory layout as the input.
+///
+/// Packet topics that match no rule are skipped (and reported back via
+/// `ConvertResult::skipped_topics`). Throws `std::runtime_error` when a
+/// single in-topic matches multiple rules (ambiguous config).
 ConvertResult convert(const ConvertOptions & options);
 
 }  // namespace nebuladec::bag

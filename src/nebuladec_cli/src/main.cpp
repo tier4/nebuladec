@@ -15,14 +15,13 @@
 // `nebuladec` command-line entry point.
 //
 //   nebuladec inspect <path>
-//   nebuladec convert <input> -o <output> [--packets-topic <name>]
-//                             [--info-topic <name>] [--output-topic <name>]
-//                             [--frame-id <name>]
+//   nebuladec convert <input> -o <output> --config <yaml> [--dry-run]
 
 #include <nebula_core_common/nebula_common.hpp>
 #include <nebuladec_bag/bag_io.hpp>
 #include <nebuladec_core/identity.hpp>
 #include <nebuladec_core/packet_sniffer.hpp>
+#include <nebuladec_core/topic_mapping.hpp>
 #include <third_party/tabulate.hpp>
 
 #include <cstdint>
@@ -32,6 +31,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -51,21 +51,18 @@ int print_usage(std::ostream & out)
          "      bag (LiDAR and Continental radar). Reads only the first\n"
          "      message per topic.\n"
          "\n"
-         "  convert <input> -o <output> [options]\n"
-         "      Decode packets from one LiDAR topic and write a sibling\n"
-         "      PointCloud2 bag. Pass --packets-topic when the bag has\n"
-         "      more than one packet-stream topic.\n"
+         "  convert <input> -o <output> --config <yaml> [--dry-run]\n"
+         "      Decode every packet topic that matches the YAML mapping\n"
+         "      and write a sibling PointCloud2 bag. Topics that do not\n"
+         "      match any rule are reported and skipped.\n"
          "\n"
          "convert options:\n"
-         "  -o, --output <path>          Output bag path (required).\n"
-         "      --output-topic <name>    PointCloud2 topic to write (default "
-         "/nebuladec/pointcloud).\n"
-         "      --packets-topic <name>   Pick the input packet topic explicitly.\n"
-         "      --info-topic <name>      Override Robosense info topic auto-detection.\n"
-         "      --frame-id <name>        Frame id on written PointCloud2 (default lidar).\n"
-         "\n"
-         "The output bag uses the same storage plugin (mcap/sqlite3) and\n"
-         "layout (file vs metadata directory) as the input.\n";
+         "  -o, --output <path>     Output bag path (required).\n"
+         "  --config <yaml>         Mapping config (required). See README\n"
+         "                          for the schema.\n"
+         "  --dry-run               Print the resolved in_topic ->\n"
+         "                          out_topic / frame_id plan as a table\n"
+         "                          without writing any bag.\n";
   return k_exit_usage;
 }
 
@@ -137,11 +134,20 @@ int cmd_inspect(const std::vector<std::string> & argv)
   }
 }
 
-int cmd_convert(const std::vector<std::string> & argv)
+struct ConvertCliOptions
 {
-  nebuladec::bag::ConvertOptions options;
-  bool have_output = false;
-  bool have_input = false;
+  std::string input_path;
+  std::string output_path;
+  std::string config_path;
+  bool have_input{false};
+  bool have_output{false};
+  bool have_config{false};
+  bool dry_run{false};
+};
+
+std::optional<ConvertCliOptions> parse_convert_args(const std::vector<std::string> & argv)
+{
+  ConvertCliOptions opts;
 
   for (std::size_t i = 0; i < argv.size(); ++i) {
     const auto & arg = argv[i];
@@ -156,59 +162,131 @@ int cmd_convert(const std::vector<std::string> & argv)
     if (arg == "-o" || arg == "--output") {
       auto v = next(arg);
       if (!v) {
-        return print_usage(std::cerr);
+        return std::nullopt;
       }
-      options.output_path = *v;
-      have_output = true;
-    } else if (arg == "--output-topic") {
+      opts.output_path = *v;
+      opts.have_output = true;
+    } else if (arg == "--config") {
       auto v = next(arg);
       if (!v) {
-        return print_usage(std::cerr);
+        return std::nullopt;
       }
-      options.output_topic = *v;
-    } else if (arg == "--packets-topic") {
-      auto v = next(arg);
-      if (!v) {
-        return print_usage(std::cerr);
-      }
-      options.packets_topic = *v;
-    } else if (arg == "--info-topic") {
-      auto v = next(arg);
-      if (!v) {
-        return print_usage(std::cerr);
-      }
-      options.info_topic = *v;
-    } else if (arg == "--frame-id") {
-      auto v = next(arg);
-      if (!v) {
-        return print_usage(std::cerr);
-      }
-      options.frame_id = *v;
+      opts.config_path = *v;
+      opts.have_config = true;
+    } else if (arg == "--dry-run") {
+      opts.dry_run = true;
     } else if (arg == "-h" || arg == "--help") {
       print_usage(std::cout);
-      return k_exit_ok;
+      std::exit(k_exit_ok);
     } else if (arg.rfind("-", 0) == 0) {
       std::cerr << "unknown option: " << arg << "\n";
-      return print_usage(std::cerr);
-    } else if (!have_input) {
-      options.input_path = arg;
-      have_input = true;
+      return std::nullopt;
+    } else if (!opts.have_input) {
+      opts.input_path = arg;
+      opts.have_input = true;
     } else {
       std::cerr << "unexpected positional argument: " << arg << "\n";
-      return print_usage(std::cerr);
+      return std::nullopt;
     }
   }
+  return opts;
+}
 
-  if (!have_input || !have_output) {
+int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
+{
+  if (entries.empty()) {
+    std::cout << "no packet topics found in bag\n";
+    return k_exit_ok;
+  }
+  tabulate::Table table;
+  table.add_row({"in_topic", "vendor", "model", "out_topic", "frame_id", "status"});
+  std::size_t ok_count = 0;
+  std::size_t skipped_count = 0;
+  std::size_t error_count = 0;
+  for (const auto & e : entries) {
+    const std::string out = e.status == "ok" ? e.out_topic : std::string{"-"};
+    const std::string frame = e.status == "ok" ? e.frame_id : std::string{"-"};
+    std::string status_cell = e.status;
+    if (!e.message.empty()) {
+      status_cell += ": " + e.message;
+    }
+    table.add_row(
+      {e.in_topic, identity_vendor(e.identity), identity_model(e.identity), out, frame,
+       status_cell});
+    if (e.status == "ok") {
+      ++ok_count;
+    } else if (e.status == "skipped") {
+      ++skipped_count;
+    } else {
+      ++error_count;
+    }
+  }
+  table[0].format().font_style({tabulate::FontStyle::bold});
+  std::cout << table << "\n";
+  std::cout << "resolved: " << ok_count << "  skipped: " << skipped_count
+            << "  errors: " << error_count << "\n";
+  return error_count == 0 ? k_exit_ok : k_exit_runtime;
+}
+
+int cmd_convert(const std::vector<std::string> & argv)
+{
+  auto parsed = parse_convert_args(argv);
+  if (!parsed) {
+    return print_usage(std::cerr);
+  }
+  if (!parsed->have_input || !parsed->have_config) {
+    return print_usage(std::cerr);
+  }
+  // --dry-run skips the output bag write so -o is optional there. The
+  // full convert flow still needs it.
+  if (!parsed->dry_run && !parsed->have_output) {
     return print_usage(std::cerr);
   }
 
+  nebuladec::TopicMapping mapping;
   try {
+    mapping = nebuladec::TopicMapping::from_yaml_file(parsed->config_path);
+  } catch (const std::exception & e) {
+    std::cerr << "failed to load config: " << e.what() << "\n";
+    return k_exit_usage;
+  }
+
+  try {
+    if (parsed->dry_run) {
+      const auto entries = nebuladec::bag::plan_convert(parsed->input_path, mapping);
+      return print_dry_run(entries);
+    }
+
+    nebuladec::bag::ConvertOptions options;
+    options.input_path = parsed->input_path;
+    options.output_path = parsed->output_path;
+    options.mapping = std::move(mapping);
     const auto result = nebuladec::bag::convert(options);
-    std::cerr << "identity         : " << format_identity(result.identity) << "\n";
-    std::cerr << "data packets     : " << result.data_packets << "\n";
-    std::cerr << "info packets     : " << result.info_packets << "\n";
-    std::cerr << "clouds written   : " << result.clouds_written << "\n";
+
+    if (!result.skipped_topics.empty()) {
+      std::cerr << "skipped " << result.skipped_topics.size()
+                << " packet topic(s) that matched no mapping rule:\n";
+      for (const auto & t : result.skipped_topics) {
+        std::cerr << "  " << t << "\n";
+      }
+    }
+
+    if (result.topics.empty()) {
+      std::cerr << "no packet topic matched any mapping rule; output bag is empty\n";
+      return k_exit_runtime;
+    }
+
+    tabulate::Table table;
+    table.add_row(
+      {"in_topic", "out_topic", "frame_id", "identity", "data_pkts", "info_pkts", "clouds"});
+    for (const auto & t : result.topics) {
+      table.add_row(
+        {t.in_topic, t.out_topic, t.frame_id, format_identity(t.identity),
+         std::to_string(t.data_packets), std::to_string(t.info_packets),
+         std::to_string(t.clouds_written)});
+    }
+    table[0].format().font_style({tabulate::FontStyle::bold});
+    std::cout << table << "\n";
     return k_exit_ok;
   } catch (const std::exception & e) {
     std::cerr << "convert failed: " << e.what() << "\n";

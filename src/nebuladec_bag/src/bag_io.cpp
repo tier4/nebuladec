@@ -692,55 +692,77 @@ InspectSummary inspect(const std::string & input_path)
 namespace
 {
 
-/// Resolve which packet topic `convert()` should operate on. When the
-/// caller supplies an override, honor it verbatim. Otherwise require a
-/// single LiDAR-capable topic — if more than one exists, fail with a
-/// message pointing the user to --packets-topic. Radar topics are
-/// excluded from auto-selection since `convert()` writes PointCloud2.
-PacketTopicSpec choose_convert_packet_topic(
-  const DiscoveredTopics & discovered, const std::optional<std::string> & override_name)
+struct ResolvedRule
 {
-  if (override_name) {
-    for (const auto & pt : discovered.packet_topics) {
-      if (pt.topic == *override_name) {
-        return pt;
-      }
-    }
-    throw std::runtime_error("packets topic '" + *override_name + "' not found in bag");
-  }
+  std::string in_topic;
+  std::string type;
+  MappingMatch match;
+};
 
-  std::vector<PacketTopicSpec> lidar_candidates;
-  for (const auto & pt : discovered.packet_topics) {
-    const auto vendor_hint = vendor_from_message_type(pt.type);
-    // NebulaPackets (vendor_hint == UNKNOWN) is ambiguous — it could be
-    // radar. Auto-select only when it is the sole candidate.
-    if (vendor_hint != Vendor::UNKNOWN) {
-      lidar_candidates.push_back(pt);
+/// Resolve every discovered packet topic against `mapping`. Packet
+/// topics that match no rule are returned in `skipped` so callers can
+/// report them. Throws std::runtime_error on duplicate matches (forwarded
+/// from TopicMapping::resolve, annotated with the offending topic).
+struct ResolvePartition
+{
+  std::vector<ResolvedRule> resolved;
+  std::vector<std::string> skipped;
+};
+
+ResolvePartition resolve_discovered_topics(
+  const std::vector<PacketTopicSpec> & packet_topics, const TopicMapping & mapping)
+{
+  ResolvePartition out;
+  out.resolved.reserve(packet_topics.size());
+  for (const auto & pt : packet_topics) {
+    auto match = mapping.resolve(pt.topic);  // may throw on duplicate match
+    if (!match) {
+      out.skipped.push_back(pt.topic);
+      continue;
     }
+    ResolvedRule r;
+    r.in_topic = pt.topic;
+    r.type = pt.type;
+    r.match = std::move(*match);
+    out.resolved.push_back(std::move(r));
   }
-  if (lidar_candidates.empty()) {
-    // Fall back to NebulaPackets topics; sniffer in the pipeline will
-    // sort Seyond from radar.
-    for (const auto & pt : discovered.packet_topics) {
-      if (vendor_from_message_type(pt.type) == Vendor::UNKNOWN) {
-        lidar_candidates.push_back(pt);
-      }
-    }
-  }
-  if (lidar_candidates.empty()) {
-    throw std::runtime_error("no Nebula packet topic found in bag");
-  }
-  if (lidar_candidates.size() > 1) {
-    std::string msg = "multiple packet topics present; pass --packets-topic to pick one:";
-    for (const auto & c : lidar_candidates) {
-      msg += "\n  " + c.topic + " (" + c.type + ")";
-    }
-    throw std::runtime_error(msg);
-  }
-  return lidar_candidates.front();
+  return out;
 }
 
 }  // namespace
+
+std::vector<ConvertPlanEntry> plan_convert(
+  const std::string & input_path, const TopicMapping & mapping)
+{
+  // Reuse inspect() so dry-run sees the same sniffed identities as the
+  // full convert() flow. inspect() already discovers every packet topic
+  // and reports vendor/model.
+  const auto summary = inspect(input_path);
+
+  std::vector<ConvertPlanEntry> entries;
+  entries.reserve(summary.topics.size());
+  for (const auto & t : summary.topics) {
+    ConvertPlanEntry entry;
+    entry.in_topic = t.topic;
+    entry.identity = t.identity;
+    try {
+      auto match = mapping.resolve(t.topic);
+      if (match) {
+        entry.out_topic = match->out_topic;
+        entry.frame_id = match->frame_id;
+        entry.info_topic = match->info_topic;
+        entry.status = "ok";
+      } else {
+        entry.status = "skipped";
+      }
+    } catch (const std::runtime_error & e) {
+      entry.status = "error";
+      entry.message = e.what();
+    }
+    entries.push_back(std::move(entry));
+  }
+  return entries;
+}
 
 ConvertResult convert(const ConvertOptions & options)
 {
@@ -750,27 +772,30 @@ ConvertResult convert(const ConvertOptions & options)
   reader.open(to_storage_options(in_spec));
 
   const auto discovered = discover_topics(reader);
-  const auto packet_spec = choose_convert_packet_topic(discovered, options.packets_topic);
-  const auto vendor_hint = vendor_from_message_type(packet_spec.type);
+  auto partition = resolve_discovered_topics(discovered.packet_topics, options.mapping);
 
-  // Info topic: honor an explicit override; otherwise pair by name prefix
-  // for Robosense streams.
-  std::string info_topic_name;
-  if (options.info_topic) {
-    for (const auto & it : discovered.info_topics) {
-      if (it.topic == *options.info_topic) {
-        info_topic_name = it.topic;
-        break;
-      }
+  if (partition.resolved.empty()) {
+    ConvertResult empty;
+    empty.skipped_topics = std::move(partition.skipped);
+    return empty;
+  }
+
+  // Validate that every info_topic promised by a matched rule actually
+  // exists in the bag. Failing fast here is much less confusing than
+  // silently producing zero info_packets for a Robosense stream.
+  std::unordered_map<std::string, std::string> info_topic_to_type;
+  for (const auto & it : discovered.info_topics) {
+    info_topic_to_type.emplace(it.topic, it.type);
+  }
+  for (const auto & r : partition.resolved) {
+    if (r.match.info_topic.empty()) {
+      continue;
     }
-    if (info_topic_name.empty()) {
-      throw std::runtime_error("info topic '" + *options.info_topic + "' not found in bag");
+    if (!info_topic_to_type.count(r.match.info_topic)) {
+      throw std::runtime_error(
+        "info topic '" + r.match.info_topic + "' (required by rule for '" + r.in_topic +
+        "') not found in bag");
     }
-  } else if (vendor_hint == Vendor::ROBOSENSE) {
-    // Auto-pair only when the bag has exactly one info topic. Multiple
-    // info topics require --info-topic so pairing never relies on
-    // topic-name matching.
-    info_topic_name = unique_info_topic(discovered.info_topics);
   }
 
   rosbag2_cpp::Writer writer;
@@ -779,71 +804,131 @@ ConvertResult convert(const ConvertOptions & options)
   out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
   writer.open(out_opts);
 
-  rosbag2_storage::TopicMetadata topic_meta;
-  topic_meta.name = options.output_topic;
-  topic_meta.type = "sensor_msgs/msg/PointCloud2";
-  topic_meta.serialization_format = "cdr";
-  writer.create_topic(topic_meta);
+  // Build per-in-topic pipelines keyed on in_topic, plus the reverse map
+  // needed by the read loop to route info_topic messages back to the
+  // packet topics that asked for them.
+  TopicStateMap states;
+  std::unordered_map<std::string, std::string> out_topic_by_in;
+  std::unordered_map<std::string, std::string> frame_id_by_in;
+  std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
+  std::unordered_map<std::string, std::unique_ptr<InfoSource>> info_sources;  // info -> source
+  std::unordered_map<std::string, std::vector<std::string>> info_targets;     // info -> in_topics
+  std::unordered_set<std::string> created_out_topics;
 
-  TopicState state;
-  state.topic = packet_spec.topic;
-  state.type = packet_spec.type;
-  state.vendor_hint = vendor_hint;
-  state.packet_source = make_packet_source(packet_spec.type);
-  state.decoder.set_vendor_hint(vendor_hint);
+  for (const auto & r : partition.resolved) {
+    const auto vendor_hint = vendor_from_message_type(r.type);
 
-  std::unique_ptr<InfoSource> info_source;
-  if (!info_topic_name.empty()) {
-    for (const auto & it : discovered.info_topics) {
-      if (it.topic == info_topic_name) {
-        info_source = make_info_source(it.type);
-        break;
+    // Guard against two rules resolving to the same output topic with
+    // different frame_ids -- rosbag2 allows two create_topic calls only
+    // when name+type+serialization match exactly, and the downstream
+    // writer.write() dispatches on name alone. Merging silently would
+    // drop one of the frame_ids, so we refuse instead.
+    if (!created_out_topics.insert(r.match.out_topic).second) {
+      throw std::runtime_error(
+        "mapping resolves multiple in_topics to the same out_topic '" + r.match.out_topic + "'");
+    }
+
+    TopicState state;
+    state.topic = r.in_topic;
+    state.type = r.type;
+    state.vendor_hint = vendor_hint;
+    state.packet_source = make_packet_source(r.type);
+    state.decoder.set_vendor_hint(vendor_hint);
+    states.emplace(r.in_topic, std::move(state));
+
+    out_topic_by_in.emplace(r.in_topic, r.match.out_topic);
+    frame_id_by_in.emplace(r.in_topic, r.match.frame_id);
+    last_stamp_by_in.emplace(r.in_topic, 0);
+
+    rosbag2_storage::TopicMetadata meta;
+    meta.name = r.match.out_topic;
+    meta.type = "sensor_msgs/msg/PointCloud2";
+    meta.serialization_format = "cdr";
+    writer.create_topic(meta);
+
+    if (!r.match.info_topic.empty()) {
+      // One InfoSource per unique info_topic; multiple packet topics may
+      // fan out from the same info stream.
+      if (!info_sources.count(r.match.info_topic)) {
+        info_sources.emplace(
+          r.match.info_topic, make_info_source(info_topic_to_type[r.match.info_topic]));
       }
+      info_targets[r.match.info_topic].push_back(r.in_topic);
     }
   }
 
-  auto sink = [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
+  auto sink = [&](
+                const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
+                std::int64_t stamp_ns) {
     if (!cloud || cloud->empty()) {
       return;
     }
-    const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), options.frame_id);
-    writer.write(pc_msg, options.output_topic, rclcpp::Time(stamp_ns));
+    const auto & out_topic = out_topic_by_in.at(in_topic);
+    const auto & frame_id = frame_id_by_in.at(in_topic);
+    const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), frame_id);
+    writer.write(pc_msg, out_topic, rclcpp::Time(stamp_ns));
   };
 
-  std::int64_t last_packet_stamp_ns = 0;
   while (reader.has_next()) {
     auto bag_msg = reader.read_next();
-    if (bag_msg->topic_name == packet_spec.topic && state.packet_source) {
-      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-      auto packets = state.packet_source->extract(serialized);
-      for (const auto & pkt : packets) {
-        last_packet_stamp_ns = pkt.stamp_ns;
-        feed_packet(state, pkt, sink);
+    if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
+      if (!it->second.packet_source) {
+        continue;
       }
-    } else if (bag_msg->topic_name == info_topic_name && info_source) {
       rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-      auto info_bytes = info_source->extract(serialized);
-      if (!info_bytes.empty()) {
-        ++state.info_packets;
-        state.decoder.feed_info(info_bytes);
+      auto packets = it->second.packet_source->extract(serialized);
+      const std::string & in_topic = it->first;
+      for (const auto & pkt : packets) {
+        last_stamp_by_in[in_topic] = pkt.stamp_ns;
+        feed_packet(
+          it->second, pkt, [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
+            sink(in_topic, cloud, stamp_ns);
+          });
+      }
+      continue;
+    }
+    if (auto it = info_sources.find(bag_msg->topic_name); it != info_sources.end()) {
+      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+      auto info_bytes = it->second->extract(serialized);
+      if (info_bytes.empty()) {
+        continue;
+      }
+      for (const auto & target : info_targets[bag_msg->topic_name]) {
+        auto ts_it = states.find(target);
+        if (ts_it == states.end()) {
+          continue;
+        }
+        ++ts_it->second.info_packets;
+        ts_it->second.decoder.feed_info(info_bytes);
       }
     }
   }
 
-  // Mechanical-LiDAR decoders hold the final scan until the next packet
-  // crosses the cut angle. At end-of-bag there is no next packet, so the
-  // last scan would be lost. Ask the decoder to flush and write it with
-  // the last-seen packet timestamp.
-  if (auto trailing = state.decoder.flush(); trailing && *trailing) {
-    ++state.clouds_produced;
-    sink(*trailing, last_packet_stamp_ns);
+  // Flush trailing scans held by mechanical-LiDAR decoders (see
+  // single-topic convert() history for rationale).
+  for (auto & [in_topic, state] : states) {
+    if (auto trailing = state.decoder.flush(); trailing && *trailing) {
+      ++state.clouds_produced;
+      sink(in_topic, *trailing, last_stamp_by_in[in_topic]);
+    }
   }
 
   ConvertResult result;
-  result.identity = state.sniffed_identity ? state.sniffed_identity : state.decoder.identity();
-  result.data_packets = state.data_packets;
-  result.info_packets = state.info_packets;
-  result.clouds_written = state.clouds_produced;
+  result.topics.reserve(partition.resolved.size());
+  for (const auto & r : partition.resolved) {
+    const auto & state = states.at(r.in_topic);
+    TopicConvertResult tr;
+    tr.in_topic = r.in_topic;
+    tr.out_topic = r.match.out_topic;
+    tr.frame_id = r.match.frame_id;
+    tr.info_topic = r.match.info_topic;
+    tr.identity = state.sniffed_identity ? state.sniffed_identity : state.decoder.identity();
+    tr.data_packets = state.data_packets;
+    tr.info_packets = state.info_packets;
+    tr.clouds_written = state.clouds_produced;
+    result.topics.push_back(std::move(tr));
+  }
+  result.skipped_topics = std::move(partition.skipped);
   return result;
 }
 

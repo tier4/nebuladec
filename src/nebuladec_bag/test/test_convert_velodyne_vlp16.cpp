@@ -21,6 +21,8 @@
 
 #include "nebuladec_bag/bag_io.hpp"
 
+#include <nebuladec_core/topic_mapping.hpp>
+
 #include <gtest/gtest.h>
 
 #include <cstdlib>
@@ -64,19 +66,28 @@ TEST(ConvertVelodyneVLP16, GroundTruthBagEmitsTrailingScan)
   ConvertOptions options;
   options.input_path = bag_path.string();
   options.output_path = out_dir.string();
+  options.mapping = TopicMapping::from_yaml_string(
+    "mapping:\n"
+    "  - in_topic:  /velodyne_packets\n"
+    "    frame_id:  lidar\n"
+    "    out_topic: /velodyne_points\n");
 
   ConvertResult result;
   ASSERT_NO_THROW(result = convert(options));
 
-  ASSERT_TRUE(result.identity.has_value());
-  EXPECT_EQ(result.identity->vendor, Vendor::VELODYNE);
-  EXPECT_EQ(result.identity->model, nebula::drivers::SensorModel::VELODYNE_VLP16);
-  EXPECT_GT(result.data_packets, 0U);
+  ASSERT_EQ(result.topics.size(), 1U);
+  const auto & t = result.topics.front();
+  ASSERT_TRUE(t.identity.has_value());
+  EXPECT_EQ(t.identity->vendor, Vendor::VELODYNE);
+  EXPECT_EQ(t.identity->model, nebula::drivers::SensorModel::VELODYNE_VLP16);
+  EXPECT_EQ(t.in_topic, "/velodyne_packets");
+  EXPECT_EQ(t.out_topic, "/velodyne_points");
+  EXPECT_GT(t.data_packets, 0U);
   // The ground-truth bag carries 4 VelodyneScan messages (~3 full scans
   // at 10 Hz). Without flush(), the scan-decoder's trailing buffer sits
   // in `scan_pc_` and the final scan is lost. Expect at least 2 clouds
   // written end-to-end, which requires flush() to function.
-  EXPECT_GE(result.clouds_written, 2U);
+  EXPECT_GE(t.clouds_written, 2U);
 
   fs::remove_all(out_dir);
 }
