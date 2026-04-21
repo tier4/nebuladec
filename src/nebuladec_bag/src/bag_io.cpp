@@ -67,6 +67,18 @@ std::string storage_id_from_extension(const fs::path & file)
   return "";
 }
 
+/// Inverse of `storage_id_from_extension` for the write path.
+std::string storage_ext_for_id(const std::string & storage_id)
+{
+  if (storage_id == "mcap") {
+    return ".mcap";
+  }
+  if (storage_id == "sqlite3") {
+    return ".db3";
+  }
+  return "";
+}
+
 std::string storage_id_from_metadata(const fs::path & metadata_file)
 {
   try {
@@ -798,15 +810,37 @@ ConvertResult convert(const ConvertOptions & options)
     }
   }
 
-  rosbag2_cpp::Writer writer;
-  rosbag2_storage::StorageOptions out_opts;
-  out_opts.uri = options.output_path;
-  out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
-  writer.open(out_opts);
+  // Mirror the input's file-vs-directory layout on the output side.
+  // rosbag2_cpp::Writer always materialises a directory (metadata.yaml +
+  // <base>_<chunk>.ext), so to emit a bare file for bare-file input we
+  // let the writer create a sibling scratch directory, then rename the
+  // single storage file to the user's requested path once the writer has
+  // closed.
+  const fs::path final_output_path{options.output_path};
+  const bool collapse_to_file = !in_spec.is_directory;
+  fs::path writer_uri = final_output_path;
+
+  if (fs::exists(final_output_path)) {
+    throw std::runtime_error(
+      "output path already exists: " + final_output_path.string() + " (refusing to overwrite)");
+  }
+
+  if (collapse_to_file) {
+    fs::path parent = final_output_path.parent_path();
+    if (parent.empty()) {
+      parent = ".";
+    }
+    writer_uri = parent / (std::string{"."} + final_output_path.filename().string() +
+                           ".nebuladec_writer_scratch");
+    // Defensive cleanup for leftovers from a prior failed run; Writer::
+    // open() fails if the uri already exists.
+    fs::remove_all(writer_uri);
+  }
 
   // Build per-in-topic pipelines keyed on in_topic, plus the reverse map
   // needed by the read loop to route info_topic messages back to the
-  // packet topics that asked for them.
+  // packet topics that asked for them. Declared here so `ConvertResult`
+  // assembly below can still read them after the writer scope closes.
   TopicStateMap states;
   std::unordered_map<std::string, std::string> out_topic_by_in;
   std::unordered_map<std::string, std::string> frame_id_by_in;
@@ -815,102 +849,136 @@ ConvertResult convert(const ConvertOptions & options)
   std::unordered_map<std::string, std::vector<std::string>> info_targets;     // info -> in_topics
   std::unordered_set<std::string> created_out_topics;
 
-  for (const auto & r : partition.resolved) {
-    const auto vendor_hint = vendor_from_message_type(r.type);
+  {
+    rosbag2_cpp::Writer writer;
+    rosbag2_storage::StorageOptions out_opts;
+    out_opts.uri = writer_uri.string();
+    out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
+    writer.open(out_opts);
 
-    // Guard against two rules resolving to the same output topic with
-    // different frame_ids -- rosbag2 allows two create_topic calls only
-    // when name+type+serialization match exactly, and the downstream
-    // writer.write() dispatches on name alone. Merging silently would
-    // drop one of the frame_ids, so we refuse instead.
-    if (!created_out_topics.insert(r.match.out_topic).second) {
-      throw std::runtime_error(
-        "mapping resolves multiple in_topics to the same out_topic '" + r.match.out_topic + "'");
+    for (const auto & r : partition.resolved) {
+      const auto vendor_hint = vendor_from_message_type(r.type);
+
+      // Guard against two rules resolving to the same output topic with
+      // different frame_ids -- rosbag2 allows two create_topic calls only
+      // when name+type+serialization match exactly, and the downstream
+      // writer.write() dispatches on name alone. Merging silently would
+      // drop one of the frame_ids, so we refuse instead.
+      if (!created_out_topics.insert(r.match.out_topic).second) {
+        throw std::runtime_error(
+          "mapping resolves multiple in_topics to the same out_topic '" + r.match.out_topic + "'");
+      }
+
+      TopicState state;
+      state.topic = r.in_topic;
+      state.type = r.type;
+      state.vendor_hint = vendor_hint;
+      state.packet_source = make_packet_source(r.type);
+      state.decoder.set_vendor_hint(vendor_hint);
+      states.emplace(r.in_topic, std::move(state));
+
+      out_topic_by_in.emplace(r.in_topic, r.match.out_topic);
+      frame_id_by_in.emplace(r.in_topic, r.match.frame_id);
+      last_stamp_by_in.emplace(r.in_topic, 0);
+
+      rosbag2_storage::TopicMetadata meta;
+      meta.name = r.match.out_topic;
+      meta.type = "sensor_msgs/msg/PointCloud2";
+      meta.serialization_format = "cdr";
+      writer.create_topic(meta);
+
+      if (!r.match.info_topic.empty()) {
+        // One InfoSource per unique info_topic; multiple packet topics may
+        // fan out from the same info stream.
+        if (!info_sources.count(r.match.info_topic)) {
+          info_sources.emplace(
+            r.match.info_topic, make_info_source(info_topic_to_type[r.match.info_topic]));
+        }
+        info_targets[r.match.info_topic].push_back(r.in_topic);
+      }
     }
 
-    TopicState state;
-    state.topic = r.in_topic;
-    state.type = r.type;
-    state.vendor_hint = vendor_hint;
-    state.packet_source = make_packet_source(r.type);
-    state.decoder.set_vendor_hint(vendor_hint);
-    states.emplace(r.in_topic, std::move(state));
-
-    out_topic_by_in.emplace(r.in_topic, r.match.out_topic);
-    frame_id_by_in.emplace(r.in_topic, r.match.frame_id);
-    last_stamp_by_in.emplace(r.in_topic, 0);
-
-    rosbag2_storage::TopicMetadata meta;
-    meta.name = r.match.out_topic;
-    meta.type = "sensor_msgs/msg/PointCloud2";
-    meta.serialization_format = "cdr";
-    writer.create_topic(meta);
-
-    if (!r.match.info_topic.empty()) {
-      // One InfoSource per unique info_topic; multiple packet topics may
-      // fan out from the same info stream.
-      if (!info_sources.count(r.match.info_topic)) {
-        info_sources.emplace(
-          r.match.info_topic, make_info_source(info_topic_to_type[r.match.info_topic]));
+    auto sink = [&](
+                  const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
+                  std::int64_t stamp_ns) {
+      if (!cloud || cloud->empty()) {
+        return;
       }
-      info_targets[r.match.info_topic].push_back(r.in_topic);
-    }
-  }
+      const auto & out_topic = out_topic_by_in.at(in_topic);
+      const auto & frame_id = frame_id_by_in.at(in_topic);
+      const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), frame_id);
+      writer.write(pc_msg, out_topic, rclcpp::Time(stamp_ns));
+    };
 
-  auto sink = [&](
-                const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
-                std::int64_t stamp_ns) {
-    if (!cloud || cloud->empty()) {
-      return;
-    }
-    const auto & out_topic = out_topic_by_in.at(in_topic);
-    const auto & frame_id = frame_id_by_in.at(in_topic);
-    const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), frame_id);
-    writer.write(pc_msg, out_topic, rclcpp::Time(stamp_ns));
-  };
-
-  while (reader.has_next()) {
-    auto bag_msg = reader.read_next();
-    if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
-      if (!it->second.packet_source) {
-        continue;
-      }
-      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-      auto packets = it->second.packet_source->extract(serialized);
-      const std::string & in_topic = it->first;
-      for (const auto & pkt : packets) {
-        last_stamp_by_in[in_topic] = pkt.stamp_ns;
-        feed_packet(
-          it->second, pkt, [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
-            sink(in_topic, cloud, stamp_ns);
-          });
-      }
-      continue;
-    }
-    if (auto it = info_sources.find(bag_msg->topic_name); it != info_sources.end()) {
-      rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-      auto info_bytes = it->second->extract(serialized);
-      if (info_bytes.empty()) {
-        continue;
-      }
-      for (const auto & target : info_targets[bag_msg->topic_name]) {
-        auto ts_it = states.find(target);
-        if (ts_it == states.end()) {
+    while (reader.has_next()) {
+      auto bag_msg = reader.read_next();
+      if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
+        if (!it->second.packet_source) {
           continue;
         }
-        ++ts_it->second.info_packets;
-        ts_it->second.decoder.feed_info(info_bytes);
+        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+        auto packets = it->second.packet_source->extract(serialized);
+        const std::string & in_topic = it->first;
+        for (const auto & pkt : packets) {
+          last_stamp_by_in[in_topic] = pkt.stamp_ns;
+          feed_packet(
+            it->second, pkt,
+            [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
+              sink(in_topic, cloud, stamp_ns);
+            });
+        }
+        continue;
+      }
+      if (auto it = info_sources.find(bag_msg->topic_name); it != info_sources.end()) {
+        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+        auto info_bytes = it->second->extract(serialized);
+        if (info_bytes.empty()) {
+          continue;
+        }
+        for (const auto & target : info_targets[bag_msg->topic_name]) {
+          auto ts_it = states.find(target);
+          if (ts_it == states.end()) {
+            continue;
+          }
+          ++ts_it->second.info_packets;
+          ts_it->second.decoder.feed_info(info_bytes);
+        }
       }
     }
-  }
 
-  // Flush trailing scans held by mechanical-LiDAR decoders (see
-  // single-topic convert() history for rationale).
-  for (auto & [in_topic, state] : states) {
-    if (auto trailing = state.decoder.flush(); trailing && *trailing) {
-      ++state.clouds_produced;
-      sink(in_topic, *trailing, last_stamp_by_in[in_topic]);
+    // Flush trailing scans held by mechanical-LiDAR decoders (see
+    // single-topic convert() history for rationale).
+    for (auto & [in_topic, state] : states) {
+      if (auto trailing = state.decoder.flush(); trailing && *trailing) {
+        ++state.clouds_produced;
+        sink(in_topic, *trailing, last_stamp_by_in[in_topic]);
+      }
     }
+  }  // writer scope ends here -- destructor flushes and closes files.
+
+  // If the input was a bare single file, collapse the scratch directory
+  // down to a single storage file at the user-requested path.
+  if (collapse_to_file) {
+    const std::string ext = storage_ext_for_id(in_spec.storage_id);
+    fs::path found;
+    for (const auto & entry : fs::directory_iterator(writer_uri)) {
+      if (entry.is_regular_file() && entry.path().extension() == ext) {
+        if (!found.empty()) {
+          // Writer should only emit one storage file per bag when no
+          // split is configured; failing loudly here is safer than
+          // silently dropping chunks.
+          throw std::runtime_error(
+            "writer produced multiple " + ext +
+            " files; bare-file output mode does not support split bags");
+        }
+        found = entry.path();
+      }
+    }
+    if (found.empty()) {
+      throw std::runtime_error("writer produced no " + ext + " file at " + writer_uri.string());
+    }
+    fs::rename(found, final_output_path);
+    fs::remove_all(writer_uri);
   }
 
   ConvertResult result;

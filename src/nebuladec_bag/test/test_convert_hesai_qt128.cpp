@@ -102,6 +102,11 @@ TEST(ConvertHesaiQT128, GroundTruthBagProducesClouds)
   // the driver. Expect both scans to land in the output.
   EXPECT_GE(t.clouds_written, 2U);
 
+  // The input is a bare .db3 file; the output must mirror that layout
+  // (single file, not a rosbag2 directory + metadata.yaml).
+  EXPECT_TRUE(fs::is_regular_file(out_dir));
+  EXPECT_FALSE(fs::is_directory(out_dir));
+
   fs::remove_all(out_dir);
 }
 

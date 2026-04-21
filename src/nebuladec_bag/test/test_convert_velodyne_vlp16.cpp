@@ -89,6 +89,11 @@ TEST(ConvertVelodyneVLP16, GroundTruthBagEmitsTrailingScan)
   // written end-to-end, which requires flush() to function.
   EXPECT_GE(t.clouds_written, 2U);
 
+  // Bare-file input -> bare-file output (see layout-mirror logic in
+  // bag_io::convert).
+  EXPECT_TRUE(fs::is_regular_file(out_dir));
+  EXPECT_FALSE(fs::is_directory(out_dir));
+
   fs::remove_all(out_dir);
 }
 
