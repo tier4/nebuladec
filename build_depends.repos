@@ -2,7 +2,7 @@ repositories:
   dependencies/nebula:
     type: git
     url: git@github.com:tier4/nebula.git
-    version: fc6e0df79e1985ab06612a29ed7c4ec1271a6067  # feat/seyond
+    version: 52daf6a9d975bafc2c65c82d85dee8a90b13ea87  # feat/seyond
   dependencies/nebula/sync_tooling_msgs:
     type: git
     url: https://github.com/tier4/sync_tooling_msgs.git
