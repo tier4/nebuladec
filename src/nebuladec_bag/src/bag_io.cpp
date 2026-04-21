@@ -931,17 +931,11 @@ ConvertResult convert(const ConvertOptions & options)
     fs::remove_all(writer_uri);
   }
 
-  // Build per-in-topic pipelines keyed on in_topic, plus the reverse map
-  // needed by the read loop to route info_topic messages back to the
-  // packet topics that asked for them. Declared here so `ConvertResult`
-  // assembly below can still read them after the writer scope closes.
+  // Only `states` needs to outlive the writer scope -- ConvertResult
+  // assembly below reads per-topic decoder stats from it. Every other
+  // bookkeeping map lives inside the writer scope so cppcheck's
+  // variableScope check stays happy.
   TopicStateMap states;
-  std::unordered_map<std::string, std::string> out_topic_by_in;
-  std::unordered_map<std::string, std::string> frame_id_by_in;
-  std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
-  std::unordered_map<std::string, std::unique_ptr<InfoSource>> info_sources;  // info -> source
-  std::unordered_map<std::string, std::vector<std::string>> info_targets;     // info -> in_topics
-  std::unordered_set<std::string> created_out_topics;
   std::vector<std::string> passthrough_topics;  // declared for result; filled below.
 
   {
@@ -950,6 +944,13 @@ ConvertResult convert(const ConvertOptions & options)
     out_opts.uri = writer_uri.string();
     out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
     writer.open(out_opts);
+
+    std::unordered_map<std::string, std::string> out_topic_by_in;
+    std::unordered_map<std::string, std::string> frame_id_by_in;
+    std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
+    std::unordered_map<std::string, std::unique_ptr<InfoSource>> info_sources;  // info -> source
+    std::unordered_map<std::string, std::vector<std::string>> info_targets;     // info -> in_topics
+    std::unordered_set<std::string> created_out_topics;
 
     // 1) Create PointCloud2 output topics for every decoded rule.
     for (const auto & r : decoded_rules) {
