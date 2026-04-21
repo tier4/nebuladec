@@ -218,7 +218,7 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
     return k_exit_ok;
   }
   tabulate::Table table;
-  table.add_row({"in_topic", "vendor", "model", "out_topic", "frame_id", "status"});
+  table.add_row({"in_topic", "vendor", "model", "out_topic", "frame_id", "decodable"});
   std::size_t ok_count = 0;
   std::size_t skipped_count = 0;
   std::size_t error_count = 0;
@@ -228,11 +228,20 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
     const std::string model_cell = no_messages ? std::string{"-"} : identity_model(e.identity);
     const std::string out = e.status == "ok" ? e.out_topic : std::string{"-"};
     const std::string frame = e.status == "ok" ? e.frame_id : std::string{"-"};
-    std::string status_cell = e.status;
-    if (!e.message.empty()) {
-      status_cell += ": " + e.message;
+    // "decodable" collapses the three internal status values into a
+    // yes/no answer for the user, with the original reason appended when
+    // the answer is no. The resolved/skipped/errors summary line below
+    // preserves the finer split for debugging ambiguous configs.
+    std::string decodable_cell;
+    if (e.status == "ok") {
+      decodable_cell = "yes";
+    } else {
+      decodable_cell = "no";
+      if (!e.message.empty()) {
+        decodable_cell += ": " + e.message;
+      }
     }
-    table.add_row({e.in_topic, vendor_cell, model_cell, out, frame, status_cell});
+    table.add_row({e.in_topic, vendor_cell, model_cell, out, frame, decodable_cell});
     if (e.status == "ok") {
       ++ok_count;
     } else if (e.status == "skipped") {
