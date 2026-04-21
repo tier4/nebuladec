@@ -25,6 +25,8 @@
 
 #include "nebuladec_bag/bag_io.hpp"
 
+#include <nebuladec_core/topic_mapping.hpp>
+
 #include <gtest/gtest.h>
 
 #include <cstdlib>
@@ -70,14 +72,23 @@ TEST(ConvertHesaiQT128, GroundTruthBagProducesClouds)
   ConvertOptions options;
   options.input_path = bag_path.string();
   options.output_path = out_dir.string();
+  options.mapping = TopicMapping::from_yaml_string(
+    "mapping:\n"
+    "  - in_topic:  /pandar_packets\n"
+    "    frame_id:  lidar\n"
+    "    out_topic: /pandar_points\n");
 
   ConvertResult result;
   ASSERT_NO_THROW(result = convert(options));
 
-  ASSERT_TRUE(result.identity.has_value());
-  EXPECT_EQ(result.identity->vendor, Vendor::HESAI);
-  EXPECT_EQ(result.identity->model, nebula::drivers::SensorModel::HESAI_PANDARQT128);
-  EXPECT_GT(result.data_packets, 0U);
+  ASSERT_EQ(result.topics.size(), 1U);
+  const auto & t = result.topics.front();
+  ASSERT_TRUE(t.identity.has_value());
+  EXPECT_EQ(t.identity->vendor, Vendor::HESAI);
+  EXPECT_EQ(t.identity->model, nebula::drivers::SensorModel::HESAI_PANDARQT128);
+  EXPECT_EQ(t.in_topic, "/pandar_packets");
+  EXPECT_EQ(t.out_topic, "/pandar_points");
+  EXPECT_GT(t.data_packets, 0U);
   // Regression #1: with the pre-fix adapter, ready_clouds_ held
   // shared_ptrs to the decoder's frame buffer, which was cleared
   // immediately after the callback. Every cloud looked empty
@@ -89,7 +100,12 @@ TEST(ConvertHesaiQT128, GroundTruthBagProducesClouds)
   // a cloud only when the *next* packet crosses the cut angle. Without
   // flush() at end-of-stream, the trailing scan stays buffered inside
   // the driver. Expect both scans to land in the output.
-  EXPECT_GE(result.clouds_written, 2U);
+  EXPECT_GE(t.clouds_written, 2U);
+
+  // The input is a bare .db3 file; the output must mirror that layout
+  // (single file, not a rosbag2 directory + metadata.yaml).
+  EXPECT_TRUE(fs::is_regular_file(out_dir));
+  EXPECT_FALSE(fs::is_directory(out_dir));
 
   fs::remove_all(out_dir);
 }

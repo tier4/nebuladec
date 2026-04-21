@@ -1,0 +1,183 @@
+// Copyright 2026 TIER IV, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "nebuladec_core/support_registry.hpp"
+
+#include <gtest/gtest.h>
+
+#include <optional>
+
+namespace nebuladec
+{
+namespace
+{
+
+using nebula::drivers::SensorModel;
+using nebula::drivers::SeyondSensorModel;
+
+const SupportRegistry & registry()
+{
+  return SupportRegistry::instance();
+}
+
+// --------------------------------------------------------------------------
+// is_vendor_supported
+// --------------------------------------------------------------------------
+
+TEST(SupportRegistry, LidarVendorsAreSupported)
+{
+  EXPECT_TRUE(registry().is_vendor_supported(Vendor::HESAI));
+  EXPECT_TRUE(registry().is_vendor_supported(Vendor::VELODYNE));
+  EXPECT_TRUE(registry().is_vendor_supported(Vendor::ROBOSENSE));
+  EXPECT_TRUE(registry().is_vendor_supported(Vendor::SEYOND));
+}
+
+TEST(SupportRegistry, ContinentalRadarIsNotSupported)
+{
+  EXPECT_FALSE(registry().is_vendor_supported(Vendor::CONTINENTAL));
+}
+
+TEST(SupportRegistry, UnknownVendorIsNotSupported)
+{
+  EXPECT_FALSE(registry().is_vendor_supported(Vendor::UNKNOWN));
+}
+
+// --------------------------------------------------------------------------
+// is_model_supported
+// --------------------------------------------------------------------------
+
+TEST(SupportRegistry, HesaiKnownModelIsSupported)
+{
+  Identity id;
+  id.vendor = Vendor::HESAI;
+  id.model = SensorModel::HESAI_PANDARQT128;
+  EXPECT_TRUE(registry().is_model_supported(id));
+}
+
+TEST(SupportRegistry, HesaiUnknownModelIsNotSupported)
+{
+  Identity id;
+  id.vendor = Vendor::HESAI;
+  id.model = SensorModel::UNKNOWN;
+  EXPECT_FALSE(registry().is_model_supported(id));
+}
+
+TEST(SupportRegistry, SeyondKnownModelIsSupported)
+{
+  Identity id;
+  id.vendor = Vendor::SEYOND;
+  id.seyond_model = SeyondSensorModel::FALCON_K;
+  EXPECT_TRUE(registry().is_model_supported(id));
+}
+
+TEST(SupportRegistry, SeyondMissingModelIsNotSupported)
+{
+  Identity id;
+  id.vendor = Vendor::SEYOND;
+  // seyond_model left unset.
+  EXPECT_FALSE(registry().is_model_supported(id));
+}
+
+TEST(SupportRegistry, SeyondSensorModelIgnoresSensorModel)
+{
+  // Seyond always carries SensorModel::UNKNOWN; the side-enum is what
+  // matters. A SensorModel match on SEYOND must NOT count.
+  Identity id;
+  id.vendor = Vendor::SEYOND;
+  id.model = SensorModel::HESAI_PANDARQT128;  // nonsense for seyond
+  id.seyond_model = std::nullopt;
+  EXPECT_FALSE(registry().is_model_supported(id));
+}
+
+// --------------------------------------------------------------------------
+// check()
+// --------------------------------------------------------------------------
+
+TEST(SupportRegistryCheck, NulloptIdentityIsVendorUnknown)
+{
+  const auto d = registry().check(std::nullopt);
+  EXPECT_EQ(d.level, SupportLevel::VendorUnknown);
+  EXPECT_FALSE(d.reason.empty());
+}
+
+TEST(SupportRegistryCheck, UnknownVendorIsVendorUnknown)
+{
+  Identity id;
+  id.vendor = Vendor::UNKNOWN;
+  const auto d = registry().check(id);
+  EXPECT_EQ(d.level, SupportLevel::VendorUnknown);
+}
+
+TEST(SupportRegistryCheck, ContinentalIsVendorNotSupported)
+{
+  Identity id;
+  id.vendor = Vendor::CONTINENTAL;
+  id.model = SensorModel::CONTINENTAL_ARS548;
+  const auto d = registry().check(id);
+  EXPECT_EQ(d.level, SupportLevel::VendorNotSupported);
+}
+
+TEST(SupportRegistryCheck, LidarVendorWithUnknownModelIsModelNotSupported)
+{
+  Identity id;
+  id.vendor = Vendor::HESAI;
+  id.model = SensorModel::UNKNOWN;
+  const auto d = registry().check(id);
+  EXPECT_EQ(d.level, SupportLevel::ModelNotSupported);
+}
+
+TEST(SupportRegistryCheck, FullySupportedPairReturnsSupported)
+{
+  Identity id;
+  id.vendor = Vendor::VELODYNE;
+  id.model = SensorModel::VELODYNE_VLP16;
+  const auto d = registry().check(id);
+  EXPECT_EQ(d.level, SupportLevel::Supported);
+  EXPECT_TRUE(d.reason.empty());
+}
+
+TEST(SupportRegistryCheck, SeyondSupportedSeyondModelReturnsSupported)
+{
+  Identity id;
+  id.vendor = Vendor::SEYOND;
+  id.seyond_model = SeyondSensorModel::ROBIN_W;
+  const auto d = registry().check(id);
+  EXPECT_EQ(d.level, SupportLevel::Supported);
+}
+
+TEST(SupportRegistryCheck, SeyondWithoutSeyondModelIsModelNotSupported)
+{
+  Identity id;
+  id.vendor = Vendor::SEYOND;
+  const auto d = registry().check(id);
+  EXPECT_EQ(d.level, SupportLevel::ModelNotSupported);
+}
+
+// --------------------------------------------------------------------------
+// supported_vendors
+// --------------------------------------------------------------------------
+
+TEST(SupportRegistry, SupportedVendorListCoversAllLidarVendors)
+{
+  const auto & list = registry().supported_vendors();
+  EXPECT_EQ(list.size(), 4U);
+  // CONTINENTAL and UNKNOWN must not appear.
+  for (auto v : list) {
+    EXPECT_NE(v, Vendor::CONTINENTAL);
+    EXPECT_NE(v, Vendor::UNKNOWN);
+  }
+}
+
+}  // namespace
+}  // namespace nebuladec

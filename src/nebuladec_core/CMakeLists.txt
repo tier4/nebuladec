@@ -13,14 +13,22 @@ endif()
 
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
+# yaml_cpp_vendor exports yaml-cpp through ament on humble, but on jazzy
+# the linker needs the target explicitly -- ament_auto_add_library alone
+# does not pull it in. Locate it up front and link it below.
+find_package(yaml_cpp_vendor REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/packet_sniffer.cpp
+  src/support_registry.cpp
+  src/topic_mapping.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(${PROJECT_NAME} yaml-cpp)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -32,6 +40,12 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_packet_sniffer test/test_packet_sniffer.cpp)
   target_link_libraries(test_packet_sniffer ${PROJECT_NAME})
+
+  ament_add_gtest(test_topic_mapping test/test_topic_mapping.cpp)
+  target_link_libraries(test_topic_mapping ${PROJECT_NAME})
+
+  ament_add_gtest(test_support_registry test/test_support_registry.cpp)
+  target_link_libraries(test_support_registry ${PROJECT_NAME})
 endif()
 
 ament_auto_package()

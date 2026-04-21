@@ -2,6 +2,7 @@
   "ignorePaths": [".cppcheck_suppressions", "src/nebuladec_cli/include/third_party/**"],
   "ignoreRegExpList": [],
   "words": [
+    "backreferenced",
     "difop",
     "falconii",
     "falconiii",
@@ -15,6 +16,9 @@
     "robine",
     "robinelite",
     "robinw",
-    "tabulate"
+    "sensinghesai",
+    "submatches",
+    "tabulate",
+    "unboundaried"
   ]
 }
