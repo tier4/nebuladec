@@ -43,26 +43,25 @@ constexpr int k_exit_runtime = 70;
 
 int print_usage(std::ostream & out)
 {
-  out << "usage: nebuladec <subcommand> [options]\n"
+  out << "usage: nebuladec convert <input> [options]\n"
          "\n"
-         "subcommands:\n"
-         "  inspect <path>\n"
-         "      Report vendor/model for every packet topic found in the\n"
-         "      bag (LiDAR and Continental radar). Reads only the first\n"
-         "      message per topic.\n"
+         "  Decode every packet topic that matches the YAML mapping into\n"
+         "  PointCloud2, and preserve every other topic from the input\n"
+         "  bag verbatim. Topics matching no rule, or whose vendor/model\n"
+         "  is not supported, are copied through unchanged.\n"
          "\n"
-         "  convert <input> -o <output> --config <yaml> [--dry-run]\n"
-         "      Decode every packet topic that matches the YAML mapping\n"
-         "      and write a sibling PointCloud2 bag. Topics that do not\n"
-         "      match any rule are reported and skipped.\n"
-         "\n"
-         "convert options:\n"
-         "  -o, --output <path>     Output bag path (required).\n"
-         "  --config <yaml>         Mapping config (required). See README\n"
-         "                          for the schema.\n"
-         "  --dry-run               Print the resolved in_topic ->\n"
-         "                          out_topic / frame_id plan as a table\n"
-         "                          without writing any bag.\n";
+         "options:\n"
+         "  -o, --output <path>   Output bag path (required unless\n"
+         "                        --dry-run is set).\n"
+         "  --config <yaml>       Mapping config. Required for actual\n"
+         "                        conversion; optional with --dry-run\n"
+         "                        (in which case dry-run reduces to a\n"
+         "                        vendor/model report of the input bag).\n"
+         "  --dry-run             Report what would be decoded without\n"
+         "                        writing any bag. With --config, prints\n"
+         "                        the full resolution plan; without it,\n"
+         "                        prints vendor/model for each packet\n"
+         "                        topic.\n";
   return k_exit_usage;
 }
 
@@ -107,50 +106,43 @@ std::string identity_model(const std::optional<nebuladec::Identity> & id)
   return os.str();
 }
 
-int cmd_inspect(const std::vector<std::string> & argv)
+int print_inspect_only(const std::string & input_path)
 {
-  if (argv.size() != 1) {
-    return print_usage(std::cerr);
-  }
-  try {
-    const auto summary = nebuladec::bag::inspect(argv[0]);
-    if (summary.topics.empty()) {
-      std::cout << "no Nebula packet topics found in bag\n";
-      return k_exit_ok;
-    }
-
-    tabulate::Table table;
-    table.add_row({"topic", "vendor", "model"});
-    // inspect's CLI hides zero-message topics to preserve the established
-    // UX ("tell me what's in this bag"). plan_convert / dry-run shows
-    // them with an explicit `skipped: no messages` row instead.
-    std::size_t visible = 0;
-    std::size_t hidden_empty = 0;
-    for (const auto & t : summary.topics) {
-      if (!t.has_messages) {
-        ++hidden_empty;
-        continue;
-      }
-      table.add_row({t.topic, identity_vendor(t.identity), identity_model(t.identity)});
-      ++visible;
-    }
-    if (visible == 0) {
-      std::cout << "no Nebula packet topics with messages in bag (" << hidden_empty
-                << " empty topic(s) hidden)\n";
-      return k_exit_ok;
-    }
-    std::cout << "topics discovered: " << visible;
-    if (hidden_empty > 0) {
-      std::cout << " (" << hidden_empty << " empty topic(s) hidden)";
-    }
-    std::cout << "\n";
-    table[0].format().font_style({tabulate::FontStyle::bold});
-    std::cout << table << "\n";
+  // Dry-run without a config: fall back to a vendor/model report of every
+  // packet topic in the bag. Equivalent to the now-removed `inspect`
+  // subcommand and useful for users who want to see what's in a bag
+  // before writing a mapping config.
+  const auto summary = nebuladec::bag::inspect(input_path);
+  if (summary.topics.empty()) {
+    std::cout << "no Nebula packet topics found in bag\n";
     return k_exit_ok;
-  } catch (const std::exception & e) {
-    std::cerr << "inspect failed: " << e.what() << "\n";
-    return k_exit_runtime;
   }
+
+  tabulate::Table table;
+  table.add_row({"topic", "vendor", "model"});
+  std::size_t visible = 0;
+  std::size_t hidden_empty = 0;
+  for (const auto & t : summary.topics) {
+    if (!t.has_messages) {
+      ++hidden_empty;
+      continue;
+    }
+    table.add_row({t.topic, identity_vendor(t.identity), identity_model(t.identity)});
+    ++visible;
+  }
+  if (visible == 0) {
+    std::cout << "no Nebula packet topics with messages in bag (" << hidden_empty
+              << " empty topic(s) hidden)\n";
+    return k_exit_ok;
+  }
+  std::cout << "topics discovered: " << visible;
+  if (hidden_empty > 0) {
+    std::cout << " (" << hidden_empty << " empty topic(s) hidden)";
+  }
+  std::cout << "\n";
+  table[0].format().font_style({tabulate::FontStyle::bold});
+  std::cout << table << "\n";
+  return k_exit_ok;
 }
 
 struct ConvertCliOptions
@@ -263,24 +255,33 @@ int cmd_convert(const std::vector<std::string> & argv)
   if (!parsed) {
     return print_usage(std::cerr);
   }
-  if (!parsed->have_input || !parsed->have_config) {
+  if (!parsed->have_input) {
     return print_usage(std::cerr);
   }
-  // --dry-run skips the output bag write so -o is optional there. The
-  // full convert flow still needs it.
-  if (!parsed->dry_run && !parsed->have_output) {
-    return print_usage(std::cerr);
-  }
-
-  nebuladec::TopicMapping mapping;
-  try {
-    mapping = nebuladec::TopicMapping::from_yaml_file(parsed->config_path);
-  } catch (const std::exception & e) {
-    std::cerr << "failed to load config: " << e.what() << "\n";
-    return k_exit_usage;
+  // Flag matrix:
+  //   --dry-run + no --config  -> inspect-style report (no mapping)
+  //   --dry-run + --config     -> full resolution plan
+  //   (no --dry-run) + -o + --config -> actual convert
+  //   anything else            -> usage error
+  if (!parsed->dry_run) {
+    if (!parsed->have_output || !parsed->have_config) {
+      return print_usage(std::cerr);
+    }
   }
 
   try {
+    if (parsed->dry_run && !parsed->have_config) {
+      return print_inspect_only(parsed->input_path);
+    }
+
+    nebuladec::TopicMapping mapping;
+    try {
+      mapping = nebuladec::TopicMapping::from_yaml_file(parsed->config_path);
+    } catch (const std::exception & e) {
+      std::cerr << "failed to load config: " << e.what() << "\n";
+      return k_exit_usage;
+    }
+
     if (parsed->dry_run) {
       const auto entries = nebuladec::bag::plan_convert(parsed->input_path, mapping);
       return print_dry_run(entries);
@@ -338,9 +339,6 @@ int main(int argc, char ** argv)
     rest.emplace_back(argv[i]);
   }
 
-  if (subcmd == "inspect") {
-    return cmd_inspect(rest);
-  }
   if (subcmd == "convert") {
     return cmd_convert(rest);
   }
