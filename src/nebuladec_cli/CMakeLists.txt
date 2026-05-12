@@ -14,12 +14,17 @@ endif()
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
-ament_auto_add_executable(nebuladec src/main.cpp)
+add_executable(nebuladec src/main.cpp)
+if(${PROJECT_NAME}_FOUND_BUILD_DEPENDS)
+  ament_target_dependencies(nebuladec ${${PROJECT_NAME}_FOUND_BUILD_DEPENDS})
+endif()
 # tabulate (p-ranav/tabulate) is vendored as the single-header
 # amalgamation at third_party/tabulate.hpp (MIT) -- keeps IntelliSense
 # working before the first build and avoids a rosdep dependency.
 target_include_directories(nebuladec SYSTEM PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
+install(TARGETS nebuladec
+  RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
