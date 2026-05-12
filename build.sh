@@ -215,3 +215,49 @@ colcon build \
     --parallel-workers "${parallel_workers}" \
     --packages-up-to nebuladec_cli \
     --cmake-args -G "${cmake_generator}" "-DCMAKE_BUILD_TYPE=${cmake_build_type}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+# Aggregate per-package compile_commands.json files into a single
+# build/compile_commands.json. colcon writes one file per package
+# (build/<pkg>/compile_commands.json); merging them lets tools that
+# expect a single workspace-level compilation database -- notably the
+# clang-tidy pre-commit hook, which is invoked with `-p=build` -- find
+# entries for every translation unit in the workspace.
+merge_compile_commands() {
+    local build_root="${SCRIPT_DIR}/build"
+    local merged="${build_root}/compile_commands.json"
+    shopt -s nullglob
+    local files=("${build_root}"/*/compile_commands.json)
+    shopt -u nullglob
+    if [[ ${#files[@]} -eq 0 ]]; then
+        return
+    fi
+    # Concatenate the arrays from every per-package file. Each input
+    # contains a single top-level JSON array, so stripping the outer
+    # brackets with sed and joining the inner entries with commas yields
+    # a valid merged array without needing jq.
+    {
+        printf '[\n'
+        local first=1
+        local f
+        for f in "${files[@]}"; do
+            if [[ ${f} == "${merged}" ]]; then
+                continue
+            fi
+            local body
+            body=$(sed -e '1s/^[[:space:]]*\[//' -e '$s/\][[:space:]]*$//' "${f}")
+            if [[ -z $(echo "${body}" | tr -d '[:space:]') ]]; then
+                continue
+            fi
+            if [[ ${first} -eq 1 ]]; then
+                first=0
+            else
+                printf ',\n'
+            fi
+            printf '%s' "${body}"
+        done
+        printf '\n]\n'
+    } >"${merged}.tmp"
+    mv "${merged}.tmp" "${merged}"
+}
+
+merge_compile_commands
