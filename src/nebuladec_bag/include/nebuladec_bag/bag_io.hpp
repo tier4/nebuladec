@@ -45,9 +45,8 @@ InputSpec detect_input(const std::string & path);
 
 /// @brief Per-topic result of an `inspect()` run.
 ///
-/// `inspect()` only reads the first packet message per topic (plus the
-/// first unique info-topic message, for Robosense DIFOP), so callers get
-/// vendor + model quickly without walking the whole bag. Vendor is
+/// `inspect()` only reads the first packet message per topic, so callers
+/// get vendor + model quickly without walking the whole bag. Vendor is
 /// always derived from the sniffed model, never from the ROS 2 message
 /// type -- `nebula_msgs/NebulaPackets` is shared by Seyond and
 /// Continental, so the type alone does not pin down a vendor. Topics
@@ -58,45 +57,33 @@ InputSpec detect_input(const std::string & path);
 struct TopicInspectResult
 {
   std::string topic;
-  /// Vendor + model resolved by feeding the first packet (and DIFOP, if
-  /// present) through the sniffer. Empty when the packet bytes could not
-  /// be identified by the sniffer or when the topic has zero messages.
+  /// Vendor + model resolved by feeding the first packet through the
+  /// sniffer. Empty when the packet bytes could not be identified by the
+  /// sniffer or when the topic has zero messages.
   std::optional<Identity> identity;
   /// Whether the topic had at least one message in the bag. False means
   /// no sniffing was attempted; `identity` will be empty.
   bool has_messages{false};
 };
 
-/// @brief Info topic discovered by `inspect()` (Robosense DIFOP, etc.).
-struct InfoTopicInspect
-{
-  std::string topic;
-  std::string type;
-  bool has_messages{false};
-};
-
-/// @brief Summary of an `inspect()` run across all packet / info topics.
+/// @brief Summary of an `inspect()` run across all packet topics.
 struct InspectSummary
 {
   std::vector<TopicInspectResult> topics;
-  /// Info topics present in the bag. Exposed so `plan_convert()` can
-  /// validate that every `info_topic` a mapping rule requires actually
-  /// exists without opening the bag a second time.
-  std::vector<InfoTopicInspect> info_topics;
 };
 
 /// Open `input_path`, auto-discover every Nebula packet topic (LiDAR and
 /// Continental radar alike), feed each topic through its own sniffer /
 /// decoder pipeline, and return one summary entry per topic. Radar
-/// topics are identified but not decoded.
+/// topics and Robosense LiDAR topics are identified but not decoded.
 InspectSummary inspect(const std::string & input_path);
 
 /// @brief Options accepted by `convert()`.
 ///
-/// The set of (in_topic -> out_topic, frame_id, info_topic) pairs is
-/// driven entirely by `mapping`; no CLI overrides exist for individual
-/// topics. Packet topics in the bag that match no rule are skipped and
-/// logged by the caller.
+/// The set of (in_topic -> out_topic, frame_id) pairs is driven entirely
+/// by `mapping`; no CLI overrides exist for individual topics. Packet
+/// topics in the bag that match no rule are skipped and logged by the
+/// caller.
 struct ConvertOptions
 {
   std::string input_path;
@@ -110,11 +97,8 @@ struct TopicConvertResult
   std::string in_topic;
   std::string out_topic;
   std::string frame_id;
-  /// Empty when the matched rule had no `info_topic`.
-  std::string info_topic;
   std::optional<Identity> identity;
   std::size_t data_packets{0};
-  std::size_t info_packets{0};
   std::size_t clouds_written{0};
 };
 
@@ -126,9 +110,9 @@ struct ConvertResult
   /// Topics that were copied verbatim from the input bag to the output
   /// bag. This includes every topic that was NOT in `topics`: packet
   /// topics that matched no rule, packet topics whose vendor/model is
-  /// not supported, info topics, and any unrelated streams (TF, IMU,
-  /// camera, ...). Exposed so the CLI can report how much data was
-  /// preserved alongside the decoded output.
+  /// not supported, and any unrelated streams (TF, IMU, camera, ...).
+  /// Exposed so the CLI can report how much data was preserved alongside
+  /// the decoded output.
   std::vector<std::string> passthrough_topics;
 };
 
@@ -136,8 +120,7 @@ struct ConvertResult
 ///
 /// `status` values:
 ///   * "ok"      -- the in_topic matched exactly one rule and would be
-///                  converted; `out_topic`, `frame_id`, and optional
-///                  `info_topic` are filled in.
+///                  converted; `out_topic` and `frame_id` are filled in.
 ///   * "skipped" -- the in_topic matched no rule; other fields are empty.
 ///   * "error"   -- the in_topic matched multiple rules; `message`
 ///                  carries the diagnostic and other fields are empty.
@@ -146,7 +129,6 @@ struct ConvertPlanEntry
   std::string in_topic;
   std::string out_topic;
   std::string frame_id;
-  std::string info_topic;
   std::optional<Identity> identity;
   std::string status;
   std::string message;
@@ -162,9 +144,9 @@ std::vector<ConvertPlanEntry> plan_convert(
 /// `options.mapping` AND whose vendor/model is supported, and write the
 /// resolved PointCloud2 topics to `options.output_path`. Every other
 /// topic in the input bag (unmatched packet topics, unsupported-vendor
-/// packet topics, Robosense info topics, TF, IMU, camera streams, ...)
-/// is preserved verbatim in the output bag. The output bag uses the
-/// same storage plugin and file/directory layout as the input.
+/// packet topics, TF, IMU, camera streams, ...) is preserved verbatim in
+/// the output bag. The output bag uses the same storage plugin and
+/// file/directory layout as the input.
 ///
 /// Throws `std::runtime_error` when a single in-topic matches multiple
 /// rules (ambiguous config).

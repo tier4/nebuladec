@@ -18,7 +18,6 @@
 
 #include <nebula_msgs/msg/nebula_packets.hpp>
 #include <pandar_msgs/msg/pandar_scan.hpp>
-#include <robosense_msgs/msg/robosense_info_packet.hpp>
 #include <robosense_msgs/msg/robosense_scan.hpp>
 #include <velodyne_msgs/msg/velodyne_scan.hpp>
 
@@ -39,7 +38,6 @@ constexpr auto k_nebula_packets = "nebula_msgs/msg/NebulaPackets";
 constexpr auto k_pandar_scan = "pandar_msgs/msg/PandarScan";
 constexpr auto k_velodyne_scan = "velodyne_msgs/msg/VelodyneScan";
 constexpr auto k_robosense_scan = "robosense_msgs/msg/RobosenseScan";
-constexpr auto k_robosense_info = "robosense_msgs/msg/RobosenseInfoPacket";
 
 std::int64_t nsec(const builtin_interfaces::msg::Time & t)
 {
@@ -128,16 +126,6 @@ public:
   }
 };
 
-class RobosenseInfoSource : public InfoSource
-{
-public:
-  std::vector<std::uint8_t> extract(const rclcpp::SerializedMessage & msg) override
-  {
-    const auto parsed = deserialize<robosense_msgs::msg::RobosenseInfoPacket>(msg);
-    return {parsed.packet.data.begin(), parsed.packet.data.end()};
-  }
-};
-
 }  // namespace
 
 std::unique_ptr<PacketSource> make_packet_source(const std::string & type_name)
@@ -157,23 +145,10 @@ std::unique_ptr<PacketSource> make_packet_source(const std::string & type_name)
   return nullptr;
 }
 
-std::unique_ptr<InfoSource> make_info_source(const std::string & type_name)
-{
-  if (type_name == k_robosense_info) {
-    return std::make_unique<RobosenseInfoSource>();
-  }
-  return nullptr;
-}
-
 bool is_packet_type(const std::string & type_name)
 {
   return type_name == k_nebula_packets || type_name == k_pandar_scan ||
          type_name == k_velodyne_scan || type_name == k_robosense_scan;
-}
-
-bool is_info_type(const std::string & type_name)
-{
-  return type_name == k_robosense_info;
 }
 
 Vendor vendor_from_message_type(const std::string & type_name)

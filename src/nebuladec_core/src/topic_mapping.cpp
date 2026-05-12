@@ -245,21 +245,6 @@ std::string required_scalar(
   return value;
 }
 
-std::optional<std::string> optional_scalar(const YAML::Node & node, const std::string & key)
-{
-  if (!node[key]) {
-    return std::nullopt;
-  }
-  if (!node[key].IsScalar()) {
-    return std::nullopt;
-  }
-  auto value = node[key].as<std::string>();
-  if (value.empty()) {
-    return std::nullopt;
-  }
-  return value;
-}
-
 }  // namespace
 
 TopicMapping::TopicMapping(std::vector<CompiledRule> compiled) : compiled_(std::move(compiled))
@@ -314,7 +299,6 @@ TopicMapping TopicMapping::from_yaml_string(const std::string & yaml)
     rule.in_pattern = required_scalar(node, "in_topic", i);
     rule.out_template = required_scalar(node, "out_topic", i);
     rule.frame_id_template = required_scalar(node, "frame_id", i);
-    rule.info_pattern = optional_scalar(node, "info_topic");
     rule.absolute = starts_with_slash(rule.in_pattern);
 
     if (rule.absolute != starts_with_slash(rule.out_template)) {
@@ -322,19 +306,10 @@ TopicMapping TopicMapping::from_yaml_string(const std::string & yaml)
         "topic_mapping: rule " + std::to_string(i) +
         ": in_topic and out_topic must both be absolute or both relative");
     }
-    if (rule.info_pattern && rule.absolute != starts_with_slash(*rule.info_pattern)) {
-      throw std::invalid_argument(
-        "topic_mapping: rule " + std::to_string(i) +
-        ": info_topic must match in_topic's absolute/relative form");
-    }
 
     auto in_tokens = tokenize_template(rule.in_pattern, "in_topic");
     auto out_tokens = tokenize_template(rule.out_template, "out_topic");
     auto frame_tokens = tokenize_template(rule.frame_id_template, "frame_id");
-    std::vector<Token> info_tokens;
-    if (rule.info_pattern) {
-      info_tokens = tokenize_template(*rule.info_pattern, "info_topic");
-    }
 
     CompiledRule cr;
     cr.rule = rule;
@@ -345,9 +320,6 @@ TopicMapping TopicMapping::from_yaml_string(const std::string & yaml)
       cr.placeholder_names.begin(), cr.placeholder_names.end());
     ensure_placeholders_known(out_tokens, known_names, "out_topic");
     ensure_placeholders_known(frame_tokens, known_names, "frame_id");
-    if (rule.info_pattern) {
-      ensure_placeholders_known(info_tokens, known_names, "info_topic");
-    }
 
     compiled.push_back(std::move(cr));
   }
@@ -387,10 +359,6 @@ std::optional<MappingMatch> TopicMapping::resolve(const std::string & in_topic) 
     m.rule_index = i;
     m.out_topic = expand_template(out_tokens, captures);
     m.frame_id = expand_template(frame_tokens, captures);
-    if (cr.rule.info_pattern) {
-      const auto info_tokens = tokenize_template(*cr.rule.info_pattern, "info_topic");
-      m.info_topic = expand_template(info_tokens, captures);
-    }
 
     // For relative rules, the absolute prefix of the incoming topic
     // lives in group 1. Splice it back onto the rewritten suffix so,
@@ -399,9 +367,6 @@ std::optional<MappingMatch> TopicMapping::resolve(const std::string & in_topic) 
     if (!cr.rule.absolute) {
       const std::string prefix = sm[1].matched ? sm[1].str() : std::string{};
       m.out_topic = prefix + m.out_topic;
-      if (cr.rule.info_pattern) {
-        m.info_topic = prefix + m.info_topic;
-      }
     }
 
     match = std::move(m);

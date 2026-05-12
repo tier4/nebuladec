@@ -39,10 +39,6 @@ public:
   virtual std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) = 0;
 
-  /// Feed an info / DIFOP packet. Meaningful for Robosense; no-op for
-  /// other vendors.
-  virtual void feed_info(const std::vector<std::uint8_t> & /*packet*/) {}
-
   /// Flush any scan buffered inside the underlying driver at end-of-stream.
   /// Mechanical-LiDAR decoders emit a cloud only once the *next* scan's
   /// first packet crosses the cut angle, so the final scan of a bag is

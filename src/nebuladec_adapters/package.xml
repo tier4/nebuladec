@@ -16,8 +16,6 @@
   <depend>ament_index_cpp</depend>
   <depend>nebula_hesai_common</depend>
   <depend>nebula_hesai_decoders</depend>
-  <depend>nebula_robosense_common</depend>
-  <depend>nebula_robosense_decoders</depend>
   <depend>nebula_seyond_common</depend>
   <depend>nebula_seyond_decoders</depend>
   <depend>nebula_velodyne_common</depend>

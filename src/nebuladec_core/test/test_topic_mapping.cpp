@@ -39,22 +39,6 @@ mapping:
   auto m = TopicMapping::from_yaml_string(yaml);
   ASSERT_EQ(m.rules().size(), 1U);
   EXPECT_TRUE(m.rules().front().absolute);
-  EXPECT_FALSE(m.rules().front().info_pattern.has_value());
-}
-
-TEST(TopicMappingParse, InfoTopicIsOptional)
-{
-  const std::string yaml = R"(
-mapping:
-  - in_topic:   /a/<v>_packets
-    info_topic: /a/<v>_info
-    frame_id:   <v>/lidar
-    out_topic:  /a/<v>_points
-)";
-  auto m = TopicMapping::from_yaml_string(yaml);
-  ASSERT_EQ(m.rules().size(), 1U);
-  ASSERT_TRUE(m.rules().front().info_pattern.has_value());
-  EXPECT_EQ(*m.rules().front().info_pattern, "/a/<v>_info");
 }
 
 TEST(TopicMappingParse, RelativeRule)
@@ -122,18 +106,6 @@ mapping:
   EXPECT_THROW(TopicMapping::from_yaml_string(yaml), std::invalid_argument);
 }
 
-TEST(TopicMappingParse, CrossAbsoluteRelativeInfoRejected)
-{
-  const std::string yaml = R"(
-mapping:
-  - in_topic:   /a/<v>_packets
-    info_topic: <v>_info
-    frame_id:   lidar
-    out_topic:  /a/<v>_points
-)";
-  EXPECT_THROW(TopicMapping::from_yaml_string(yaml), std::invalid_argument);
-}
-
 TEST(TopicMappingParse, UnknownPlaceholderInOutRejected)
 {
   const std::string yaml = R"(
@@ -197,7 +169,6 @@ mapping:
   ASSERT_TRUE(match.has_value());
   EXPECT_EQ(match->out_topic, "/sensing/lidar/front_right/hesai_points");
   EXPECT_EQ(match->frame_id, "front_right/lidar");
-  EXPECT_TRUE(match->info_topic.empty());
 }
 
 TEST(TopicMappingResolve, AbsoluteMatchRequiresAnchoredFullPath)
@@ -323,26 +294,6 @@ mapping:
 
   EXPECT_FALSE(m.resolve("/b/hesai_packets").has_value());
   EXPECT_FALSE(m.resolve("").has_value());
-}
-
-// ---------------------------------------------------------------------------
-// info_topic substitution
-// ---------------------------------------------------------------------------
-
-TEST(TopicMappingResolve, InfoTopicIsSubstituted)
-{
-  const std::string yaml = R"(
-mapping:
-  - in_topic:   /a/<v>_packets
-    info_topic: /a/<v>_info
-    frame_id:   lidar
-    out_topic:  /a/<v>_points
-)";
-  auto m = TopicMapping::from_yaml_string(yaml);
-
-  auto match = m.resolve("/a/robosense_packets");
-  ASSERT_TRUE(match.has_value());
-  EXPECT_EQ(match->info_topic, "/a/robosense_info");
 }
 
 }  // namespace
