@@ -23,3 +23,6 @@ node_modules/
 # YAML
 *.yaml
 *.yml
+
+# Claude Code
+.claude/
