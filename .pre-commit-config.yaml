@@ -7,10 +7,12 @@ ci:
   autofix_commit_msg: "style(pre-commit): autofix"
   autoupdate_schedule: quarterly
   autoupdate_commit_msg: "ci(pre-commit): quarterly autoupdate"
-  # cppcheck is a system tool not available in the pre-commit.ci runner.
-  # The dedicated cppcheck-differential workflow covers PR coverage; the
-  # local hook is intended for developer machines and our self-hosted CI.
-  skip: [cppcheck]
+  # cppcheck is a system tool not available in the pre-commit.ci runner,
+  # and clang-tidy needs build/compile_commands.json which only exists
+  # after `./build.sh` (run by our GitHub Actions pre-commit job before
+  # pre-commit). Both hooks still run locally and in our pre-commit CI;
+  # they are only skipped on the hosted pre-commit.ci service.
+  skip: [cppcheck, clang-tidy]
 
 # Vendored third-party headers (e.g. tabulate single-header) are not
 # part of our style budget: let them keep upstream formatting.
@@ -132,6 +134,16 @@ repos:
           - --inline-suppr
         language: system
         types_or: [c++, c]
+        require_serial: true
+
+      - id: clang-tidy
+        name: clang-tidy
+        description: Run clang-tidy against the .clang-tidy checks (needs build/compile_commands.json).
+        entry: clang-tidy
+        args: [-p=build, --quiet]
+        language: python
+        additional_dependencies: [clang-tidy==21.1.6]
+        files: ^src/nebuladec_(adapters|bag|cli|core)/.*\.(c|cc|cpp|cxx)$
         require_serial: true
 
   - repo: https://github.com/AleksaC/hadolint-py
