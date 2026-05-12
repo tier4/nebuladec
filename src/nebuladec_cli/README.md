@@ -46,7 +46,7 @@ entry to maintain.
 
 ## Config YAML
 
-Example: [`config/x2.yaml`](../../config/x2.yaml)
+Example: `config/x2.yaml`
 
 ```yaml
 mapping:
