@@ -139,3 +139,9 @@ repos:
     hooks:
       - id: hadolint
         exclude: .svg$
+
+  - repo: https://github.com/tcort/markdown-link-check
+    rev: v3.14.2
+    hooks:
+      - id: markdown-link-check
+        args: [--quiet, --config=.markdown-link-check.json]
