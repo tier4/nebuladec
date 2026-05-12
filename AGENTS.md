@@ -5,8 +5,11 @@ Guidelines for AI agents contributing to this repository.
 ## 1. Code & Documentation
 
 - Always write source code and documentation in English.
-- When modifying source code, update the corresponding documentation
-  (e.g. `README.md`, command-line help text) to reflect the changes.
+- Whenever source code is modified, the corresponding documentation
+  (e.g. `README.md`, command-line help text, in-source comments) MUST
+  be updated in the same change. Source and documentation must always
+  describe the same behavior — leaving them out of sync is not
+  acceptable, even temporarily.
 
 ## 2. Attribution
 
@@ -27,9 +30,14 @@ Guidelines for AI agents contributing to this repository.
 
 ## 4. Pre-commit Hooks
 
-- Do not bypass pre-commit hooks (e.g. `--no-verify`). When a hook
-  reports an error, fix the underlying issue and re-commit — never
-  skip or disable the hook to push work through.
+- Every pre-commit hook MUST end in the `Passed` state. Never bypass
+  hooks (e.g. `--no-verify`) and never disable, broaden, or globally
+  ignore a rule to push work through — fix the underlying issue by
+  refactoring the source code so all hooks pass cleanly.
+- If a hook reports what is clearly a false positive, you MAY suppress
+  it inline at the narrowest possible scope (e.g. a single line or
+  symbol) with an explanatory comment. Inline suppression is the only
+  acceptable form of bypass.
 
 ## 5. GitHub Actions / CI
 
@@ -40,7 +48,33 @@ Guidelines for AI agents contributing to this repository.
   the actual logs. Base bug fixes on evidence from those logs, not on
   assumptions.
 
-## 6. Remote Repository Operations
+## 6. Coding Conventions
+
+- Unless given explicit instructions to the contrary, analyze the
+  existing codebase's naming conventions and design patterns and
+  follow them when writing new code. Stay consistent with the
+  surrounding code rather than introducing a new style.
+- Prefer many small functions with a single, well-defined
+  responsibility over large functions that perform multiple unrelated
+  steps. Each function should do one thing, have a clear scope, and
+  be named after that one responsibility; extract helpers when a
+  function starts mixing concerns.
+- Avoid reinventing the wheel. Before implementing non-trivial
+  functionality, check whether a well-maintained open-source library
+  already solves the problem; if a suitable OSS alternative exists,
+  proactively propose it (with a brief note on maintenance status,
+  license, and fit) instead of writing a custom implementation.
+- When writing any type that owns a dynamic resource (heap memory,
+  file descriptors, sockets, locks, GPU handles, etc.), strictly
+  follow RAII: acquire the resource in the constructor and release
+  it in the destructor, and make ownership semantics explicit via
+  smart pointers (`std::unique_ptr`, `std::shared_ptr`) or
+  equivalent owning wrappers. Code must be free of memory leaks,
+  double-free, use-after-free, dangling pointers, and forgotten
+  releases — prefer the rule of zero, and only fall back to the
+  rule of five with a clear justification.
+
+## 7. Remote Repository Operations
 
 - Always obtain explicit developer approval before making any changes
   to the remote repository — pushing commits, creating/closing pull
