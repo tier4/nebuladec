@@ -15,7 +15,7 @@
 // `nebuladec` command-line entry point.
 //
 //   nebuladec inspect <path>
-//   nebuladec convert <input> -o <output> --config <yaml> [--dry-run]
+//   nebuladec convert <input> -o <output> -c <yaml> [--dry-run]
 
 #include <nebula_core_common/nebula_common.hpp>
 #include <nebuladec_bag/bag_io.hpp>
@@ -53,7 +53,7 @@ int print_usage(std::ostream & out)
          "options:\n"
          "  -o, --output <path>   Output bag path (required unless\n"
          "                        --dry-run is set).\n"
-         "  --config <yaml>       Mapping config. Required for actual\n"
+         "  -c, --config <yaml>   Mapping config. Required for actual\n"
          "                        conversion; optional with --dry-run\n"
          "                        (in which case dry-run reduces to a\n"
          "                        vendor/model report of the input bag).\n"
@@ -177,7 +177,7 @@ std::optional<ConvertCliOptions> parse_convert_args(const std::vector<std::strin
       }
       opts.output_path = *v;
       opts.have_output = true;
-    } else if (arg == "--config") {
+    } else if (arg == "-c" || arg == "--config") {
       auto v = next(arg);
       if (!v) {
         return std::nullopt;
