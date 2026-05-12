@@ -93,5 +93,5 @@ The recognized ROS message types are:
 ## Build artifacts
 
 - Shared library `nebuladec_bag` (three source files). Linked explicitly against `SQLite::SQLite3`.
-- gtests: `test_detect_input` and `test_point_cloud2` are always built. `test_convert_hesai_qt128` and `test_convert_velodyne_vlp16` register only when the corresponding golden bag is present.
+- Test binaries: `test_detect_input` and `test_point_cloud2` are always built. `test_convert_hesai_qt128` and `test_convert_velodyne_vlp16` register only when the corresponding golden bag is present.
 - `ament_cmake_uncrustify` is suppressed — formatting is enforced by clang-format via pre-commit.

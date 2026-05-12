@@ -28,7 +28,7 @@ nebuladec convert <input> -o <output> -c <config.yaml> [--dry-run]
 
 - **`--dry-run` alone (no config)** — Inspect-style report: a `topic | vendor | model` table.
 - **`--dry-run --config`** — Full resolution plan: an `in_topic | vendor | model | out_topic | frame_id | decodable` table plus a `resolved / skipped / errors` summary line. Exits non-zero if any errors are present.
-- **Without `--dry-run`** — Both `--output` and `--config` are required. On success, prints a results table of `in_topic | out_topic | frame_id | identity | data_pkts | clouds`. Topics with no matching rule are passed through verbatim.
+- **Without `--dry-run`** — Both `--output` and `--config` are required. On success, prints a per-topic results table with input topic, output topic, frame id, resolved identity, processed packet count, and emitted cloud count. Topics with no matching rule are passed through verbatim.
 
 There is no `inspect` subcommand — its role is absorbed by
 `convert --dry-run` (without `--config`).
@@ -46,7 +46,7 @@ entry to maintain.
 
 ## Config YAML
 
-Example: `/home/otenim/Dev/nebuladec/config/x2.yaml`
+Example: [`config/x2.yaml`](../../config/x2.yaml)
 
 ```yaml
 mapping:
