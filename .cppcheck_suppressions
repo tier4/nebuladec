@@ -7,5 +7,6 @@ missingInclude
 missingIncludeSystem
 unmatchedSuppression
 unusedFunction
+unusedStructMember
 useInitializationList
 useStlAlgorithm

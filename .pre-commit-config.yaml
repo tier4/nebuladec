@@ -7,6 +7,10 @@ ci:
   autofix_commit_msg: "style(pre-commit): autofix"
   autoupdate_schedule: quarterly
   autoupdate_commit_msg: "ci(pre-commit): quarterly autoupdate"
+  # cppcheck is a system tool not available in the pre-commit.ci runner.
+  # The dedicated cppcheck-differential workflow covers PR coverage; the
+  # local hook is intended for developer machines and our self-hosted CI.
+  skip: [cppcheck]
 
 # Vendored third-party headers (e.g. tabulate single-header) are not
 # part of our style budget: let them keep upstream formatting.
@@ -112,6 +116,23 @@ repos:
         language: node
         files: .svg$
         additional_dependencies: [prettier@2.7.1, "@prettier/plugin-xml@2.2.0"]
+
+      - id: cppcheck
+        name: cppcheck
+        description: Run cppcheck on changed C/C++ sources using .cppcheck_suppressions.
+        entry: cppcheck
+        args:
+          - --enable=all
+          - --inconclusive
+          - -DPLUGINLIB_EXPORT_CLASS(class_type,base_class)=
+          - -Dslots=
+          - -DQ_SLOTS=
+          - --error-exitcode=1
+          - --suppressions-list=.cppcheck_suppressions
+          - --inline-suppr
+        language: system
+        types_or: [c++, c]
+        require_serial: true
 
   - repo: https://github.com/AleksaC/hadolint-py
     rev: v2.14.0
