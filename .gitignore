@@ -19,3 +19,7 @@ log/
 
 # Node
 node_modules/
+
+# YAML
+*.yaml
+*.yml
