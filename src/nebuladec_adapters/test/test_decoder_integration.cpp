@@ -130,13 +130,13 @@ TEST(DecoderIntegration, SeyondIsIdentifiedAndRouted)
   EXPECT_EQ(decoder.identity()->vendor, Vendor::SEYOND);
 }
 
-// --- Robosense ----------------------------------------------------------
+// --- Robosense (identified, not decoded) --------------------------------
 
-TEST(DecoderIntegration, RobosenseHeliosMsopAloneDoesNotProduceCloud)
+TEST(DecoderIntegration, RobosenseHeliosMsopIsIdentifiedButNotDecoded)
 {
-  // Without a DIFOP packet the driver cannot be constructed, so MSOPs
-  // are accepted and silently dropped -- matching Nebula's launch_hw:=false
-  // behaviour when the info topic is missing from a bag.
+  // Robosense streams are sniffed for vendor and model, but
+  // nebuladec_adapters intentionally does not provide a PointCloud2
+  // adapter for them, so feed() never produces a cloud.
   Decoder decoder;
   for (int i = 0; i < 8; ++i) {
     auto cloud = decoder.feed(make_robosense_helios_msop_packet(), 0.0);
@@ -154,16 +154,6 @@ TEST(DecoderIntegration, RobosenseBpearlV3MsopIsIdentified)
   ASSERT_TRUE(decoder.identity().has_value());
   EXPECT_EQ(decoder.identity()->vendor, Vendor::ROBOSENSE);
   EXPECT_EQ(decoder.identity()->model, nebula::drivers::SensorModel::ROBOSENSE_BPEARL_V3);
-}
-
-TEST(DecoderIntegration, RobosenseFeedInfoBeforeMsopIsSafe)
-{
-  // feed_info() before any MSOP has been seen is a no-op (the adapter
-  // has not been instantiated yet). It must not crash.
-  Decoder decoder;
-  std::vector<std::uint8_t> info(64, 0xA5);
-  decoder.feed_info(info);
-  SUCCEED();
 }
 
 // --- Robustness ---------------------------------------------------------

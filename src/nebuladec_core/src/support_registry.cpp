@@ -83,13 +83,6 @@ SupportRegistry::SupportRegistry()
      },
      {}});
   vendors_.push_back(
-    {Vendor::ROBOSENSE,
-     {
-       SensorModel::ROBOSENSE_BPEARL_V3,
-       SensorModel::ROBOSENSE_HELIOS,
-     },
-     {}});
-  vendors_.push_back(
     {Vendor::SEYOND,
      {},
      {

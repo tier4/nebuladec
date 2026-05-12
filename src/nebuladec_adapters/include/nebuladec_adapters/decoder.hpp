@@ -51,11 +51,6 @@ public:
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec);
 
-  /// Feed an info / DIFOP packet. Currently forwarded unconditionally so
-  /// that Robosense calibration can be reconstructed (M6). Safe to call
-  /// on non-Robosense streams.
-  void feed_info(const std::vector<std::uint8_t> & packet);
-
   /// Flush the final buffered scan, if any, once no more packets will be
   /// fed. Returns the last scan that would otherwise remain inside the
   /// driver (see AnyDecoder::flush). The min_points filter still applies.
@@ -76,8 +71,8 @@ public:
   /// Minimum number of points a scan must contain to be surfaced from
   /// feed(). Clouds with fewer points are silently dropped. Defaults to
   /// 1024, which filters the first, partial-revolution scan that
-  /// Hesai / Velodyne / Robosense decoders emit when replay starts
-  /// mid-rotation. Pass 0 to disable the filter.
+  /// Hesai / Velodyne decoders emit when replay starts mid-rotation.
+  /// Pass 0 to disable the filter.
   void set_min_points(std::size_t min_points);
 
   /// The current minimum-points threshold.
