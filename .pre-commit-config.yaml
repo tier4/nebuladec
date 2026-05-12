@@ -113,6 +113,23 @@ repos:
         files: .svg$
         additional_dependencies: [prettier@2.7.1, "@prettier/plugin-xml@2.2.0"]
 
+      - id: cppcheck
+        name: cppcheck
+        description: Run cppcheck on changed C/C++ sources using .cppcheck_suppressions.
+        entry: cppcheck
+        args:
+          - --enable=all
+          - --inconclusive
+          - -DPLUGINLIB_EXPORT_CLASS(class_type,base_class)=
+          - -Dslots=
+          - -DQ_SLOTS=
+          - --error-exitcode=1
+          - --suppressions-list=.cppcheck_suppressions
+          - --inline-suppr
+        language: system
+        types_or: [c++, c]
+        require_serial: true
+
   - repo: https://github.com/AleksaC/hadolint-py
     rev: v2.14.0
     hooks:
