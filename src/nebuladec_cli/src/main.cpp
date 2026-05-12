@@ -14,7 +14,6 @@
 //
 // `nebuladec` command-line entry point.
 //
-//   nebuladec inspect <path>
 //   nebuladec convert <input> -o <output> -c <yaml> [--dry-run]
 
 #include <nebula_core_common/nebula_common.hpp>
@@ -22,10 +21,11 @@
 #include <nebuladec_core/identity.hpp>
 #include <nebuladec_core/packet_sniffer.hpp>
 #include <nebuladec_core/topic_mapping.hpp>
+#include <third_party/CLI11.hpp>
 #include <third_party/tabulate.hpp>
 
+#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <optional>
@@ -40,30 +40,6 @@ namespace
 constexpr int k_exit_ok = 0;
 constexpr int k_exit_usage = 64;
 constexpr int k_exit_runtime = 70;
-
-int print_usage(std::ostream & out)
-{
-  out << "usage: nebuladec convert <input> [options]\n"
-         "\n"
-         "  Decode every packet topic that matches the YAML mapping into\n"
-         "  PointCloud2, and preserve every other topic from the input\n"
-         "  bag verbatim. Topics matching no rule, or whose vendor/model\n"
-         "  is not supported, are copied through unchanged.\n"
-         "\n"
-         "options:\n"
-         "  -o, --output <path>   Output bag path (required unless\n"
-         "                        --dry-run is set).\n"
-         "  -c, --config <yaml>   Mapping config. Required for actual\n"
-         "                        conversion; optional with --dry-run\n"
-         "                        (in which case dry-run reduces to a\n"
-         "                        vendor/model report of the input bag).\n"
-         "  --dry-run             Report what would be decoded without\n"
-         "                        writing any bag. With --config, prints\n"
-         "                        the full resolution plan; without it,\n"
-         "                        prints vendor/model for each packet\n"
-         "                        topic.\n";
-  return k_exit_usage;
-}
 
 std::string format_identity(const std::optional<nebuladec::Identity> & id)
 {
@@ -150,58 +126,10 @@ struct ConvertCliOptions
   std::string input_path;
   std::string output_path;
   std::string config_path;
-  bool have_input{false};
   bool have_output{false};
   bool have_config{false};
   bool dry_run{false};
 };
-
-std::optional<ConvertCliOptions> parse_convert_args(const std::vector<std::string> & argv)
-{
-  ConvertCliOptions opts;
-
-  for (std::size_t i = 0; i < argv.size(); ++i) {
-    const auto & arg = argv[i];
-    auto next = [&](const std::string & name) -> std::optional<std::string> {
-      if (i + 1 >= argv.size()) {
-        std::cerr << "missing value for " << name << "\n";
-        return std::nullopt;
-      }
-      return argv[++i];
-    };
-
-    if (arg == "-o" || arg == "--output") {
-      auto v = next(arg);
-      if (!v) {
-        return std::nullopt;
-      }
-      opts.output_path = *v;
-      opts.have_output = true;
-    } else if (arg == "-c" || arg == "--config") {
-      auto v = next(arg);
-      if (!v) {
-        return std::nullopt;
-      }
-      opts.config_path = *v;
-      opts.have_config = true;
-    } else if (arg == "--dry-run") {
-      opts.dry_run = true;
-    } else if (arg == "-h" || arg == "--help") {
-      print_usage(std::cout);
-      std::exit(k_exit_ok);
-    } else if (arg.rfind("-", 0) == 0) {
-      std::cerr << "unknown option: " << arg << "\n";
-      return std::nullopt;
-    } else if (!opts.have_input) {
-      opts.input_path = arg;
-      opts.have_input = true;
-    } else {
-      std::cerr << "unexpected positional argument: " << arg << "\n";
-      return std::nullopt;
-    }
-  }
-  return opts;
-}
 
 int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
 {
@@ -249,47 +177,29 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
   return error_count == 0 ? k_exit_ok : k_exit_runtime;
 }
 
-int cmd_convert(const std::vector<std::string> & argv)
+int run_convert(const ConvertCliOptions & opts)
 {
-  auto parsed = parse_convert_args(argv);
-  if (!parsed) {
-    return print_usage(std::cerr);
-  }
-  if (!parsed->have_input) {
-    return print_usage(std::cerr);
-  }
-  // Flag matrix:
-  //   --dry-run + no --config  -> inspect-style report (no mapping)
-  //   --dry-run + --config     -> full resolution plan
-  //   (no --dry-run) + -o + --config -> actual convert
-  //   anything else            -> usage error
-  if (!parsed->dry_run) {
-    if (!parsed->have_output || !parsed->have_config) {
-      return print_usage(std::cerr);
-    }
-  }
-
   try {
-    if (parsed->dry_run && !parsed->have_config) {
-      return print_inspect_only(parsed->input_path);
+    if (opts.dry_run && !opts.have_config) {
+      return print_inspect_only(opts.input_path);
     }
 
     nebuladec::TopicMapping mapping;
     try {
-      mapping = nebuladec::TopicMapping::from_yaml_file(parsed->config_path);
+      mapping = nebuladec::TopicMapping::from_yaml_file(opts.config_path);
     } catch (const std::exception & e) {
       std::cerr << "failed to load config: " << e.what() << "\n";
       return k_exit_usage;
     }
 
-    if (parsed->dry_run) {
-      const auto entries = nebuladec::bag::plan_convert(parsed->input_path, mapping);
+    if (opts.dry_run) {
+      const auto entries = nebuladec::bag::plan_convert(opts.input_path, mapping);
       return print_dry_run(entries);
     }
 
     nebuladec::bag::ConvertOptions options;
-    options.input_path = parsed->input_path;
-    options.output_path = parsed->output_path;
+    options.input_path = opts.input_path;
+    options.output_path = opts.output_path;
     options.mapping = std::move(mapping);
     const auto result = nebuladec::bag::convert(options);
 
@@ -328,25 +238,57 @@ int cmd_convert(const std::vector<std::string> & argv)
 
 int main(int argc, char ** argv)
 {
-  if (argc < 2) {
-    return print_usage(std::cerr);
+  CLI::App app{"nebuladec -- decode Nebula packet bags to PointCloud2"};
+  app.require_subcommand(1);
+  app.set_help_flag("-h,--help", "Print this help message and exit");
+
+  auto * convert = app.add_subcommand(
+    "convert",
+    "Decode every packet topic that matches the YAML mapping into "
+    "PointCloud2, and preserve every other topic from the input bag verbatim. "
+    "Topics matching no rule, or whose vendor/model is not supported, are "
+    "copied through unchanged.");
+  convert->set_help_flag("-h,--help", "Print this help message and exit");
+
+  ConvertCliOptions opts;
+  convert->add_option("input", opts.input_path, "Input bag path")->required();
+  auto * out_opt = convert->add_option(
+    "-o,--output", opts.output_path, "Output bag path (required unless --dry-run is set).");
+  auto * cfg_opt = convert->add_option(
+    "-c,--config", opts.config_path,
+    "Mapping config (YAML). Required for actual conversion; optional with "
+    "--dry-run (in which case dry-run reduces to a vendor/model report of "
+    "the input bag).");
+  convert->add_flag(
+    "--dry-run", opts.dry_run,
+    "Report what would be decoded without writing any bag. With --config, "
+    "prints the full resolution plan; without it, prints vendor/model for "
+    "each packet topic.");
+
+  // Flag matrix (mirrors prior hand-rolled behavior):
+  //   --dry-run + no --config  -> inspect-style report
+  //   --dry-run + --config     -> full resolution plan
+  //   (no --dry-run)           -> requires both --output and --config
+  convert->callback([&]() {
+    opts.have_output = out_opt->count() > 0;
+    opts.have_config = cfg_opt->count() > 0;
+    if (!opts.dry_run && (!opts.have_output || !opts.have_config)) {
+      throw CLI::ValidationError("--output and --config are required without --dry-run");
+    }
+  });
+
+  try {
+    app.parse(argc, argv);
+  } catch (const CLI::ParseError & e) {
+    const int code = app.exit(e);
+    // Preserve historical exit codes: 0 for help/version, 64 for any usage
+    // error. CLI11 returns its own non-zero codes (e.g. 105 for RequiredError)
+    // which would surprise existing callers.
+    return code == 0 ? k_exit_ok : k_exit_usage;
   }
 
-  const std::string subcmd = argv[1];
-  std::vector<std::string> rest;
-  rest.reserve(argc - 2);
-  for (int i = 2; i < argc; ++i) {
-    rest.emplace_back(argv[i]);
+  if (convert->parsed()) {
+    return run_convert(opts);
   }
-
-  if (subcmd == "convert") {
-    return cmd_convert(rest);
-  }
-  if (subcmd == "-h" || subcmd == "--help") {
-    print_usage(std::cout);
-    return k_exit_ok;
-  }
-
-  std::cerr << "unknown subcommand: " << subcmd << "\n";
-  return print_usage(std::cerr);
+  return k_exit_usage;
 }
