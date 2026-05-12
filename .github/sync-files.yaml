@@ -29,7 +29,4 @@
 
 - repository: autowarefoundation/autoware_universe
   files:
-    - source: .github/workflows/cppcheck-weekly.yaml
-    - source: .github/workflows/cppcheck-differential.yaml
-    - source: .github/cppcheck-problem-matcher.json
     - source: .cppcheck_suppressions
