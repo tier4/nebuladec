@@ -147,16 +147,9 @@ struct PacketTopicSpec
   std::string type;
 };
 
-struct InfoTopicSpec
-{
-  std::string topic;
-  std::string type;
-};
-
 struct DiscoveredTopics
 {
   std::vector<PacketTopicSpec> packet_topics;
-  std::vector<InfoTopicSpec> info_topics;
 };
 
 DiscoveredTopics discover_topics(const rosbag2_cpp::Reader & reader)
@@ -166,25 +159,9 @@ DiscoveredTopics discover_topics(const rosbag2_cpp::Reader & reader)
     const auto & meta = info.topic_metadata;
     if (is_packet_type(meta.type)) {
       out.packet_topics.push_back({meta.name, meta.type});
-    } else if (is_info_type(meta.type)) {
-      out.info_topics.push_back({meta.name, meta.type});
     }
   }
   return out;
-}
-
-/// Auto-pair a Robosense packet topic with its DIFOP info topic, using
-/// only structural signals (no topic-name heuristics):
-///   * exactly one info topic in the bag -> pair with every Robosense
-///     packet topic, on the assumption that a single bag carries one
-///     Robosense calibration;
-///   * zero or multiple info topics -> return empty; the caller must
-///     pass an explicit override (e.g. --info-topic) to disambiguate.
-/// Model identification NEVER depends on this pairing; the sniffer
-/// resolves vendor and model from packet bytes alone.
-std::string unique_info_topic(const std::vector<InfoTopicSpec> & infos)
-{
-  return infos.size() == 1 ? infos.front().topic : "";
 }
 
 struct TopicState
@@ -195,29 +172,16 @@ struct TopicState
   std::unique_ptr<PacketSource> packet_source;
   Decoder decoder;
   std::size_t data_packets{0};
-  std::size_t info_packets{0};
   std::size_t clouds_produced{0};
   /// Tracks the last-seen identity so callers can inspect Continental
-  /// radar topics even though make_adapter returns nullptr for them.
-  /// Mirrors `decoder.identity()` for LiDAR vendors and carries the
-  /// sniffed CONTINENTAL identity for radar.
+  /// radar / Robosense topics even though make_adapter returns nullptr
+  /// for them. Mirrors `decoder.identity()` for decoded LiDAR vendors
+  /// and carries the sniffed identity for identification-only vendors.
   std::optional<Identity> sniffed_identity;
   PacketSniffer sniffer;
 };
 
-struct InfoState
-{
-  std::string topic;
-  std::string type;
-  std::unique_ptr<InfoSource> info_source;
-  /// Packet topics that should receive feed_info() calls for this info
-  /// topic. Set during inspect() / convert() setup and only populated
-  /// when the bag has exactly one info topic.
-  std::vector<std::string> target_packet_topics;
-};
-
 using TopicStateMap = std::unordered_map<std::string, TopicState>;
-using InfoStateMap = std::unordered_map<std::string, InfoState>;
 
 void feed_packet(
   TopicState & state, const PacketBytes & pkt,
@@ -253,25 +217,9 @@ void feed_packet(
       cloud_sink(*cloud, pkt.stamp_ns);
     }
   }
-  // Prefer the decoder's resolved identity once it exists: it reflects
-  // the adapter's own view (useful when, e.g., a Robosense DIFOP packet
-  // pins down the model).
+  // Prefer the decoder's resolved identity once it exists.
   if (auto decoder_id = state.decoder.identity(); decoder_id) {
     state.sniffed_identity = decoder_id;
-  }
-}
-
-void feed_info_to_targets(
-  const InfoState & info_state, const std::vector<std::uint8_t> & info_bytes,
-  TopicStateMap & topics)
-{
-  for (const auto & target : info_state.target_packet_topics) {
-    auto it = topics.find(target);
-    if (it == topics.end()) {
-      continue;
-    }
-    ++it->second.info_packets;
-    it->second.decoder.feed_info(info_bytes);
   }
 }
 
@@ -283,8 +231,7 @@ void feed_info_to_targets(
 /// entry would only add noise.
 InspectSummary build_summary(
   const std::vector<PacketTopicSpec> & packet_order, const TopicStateMap & topic_states,
-  const std::unordered_set<std::string> & topics_with_messages,
-  const std::vector<InfoTopicSpec> & info_specs)
+  const std::unordered_set<std::string> & topics_with_messages)
 {
   InspectSummary summary;
   summary.topics.reserve(packet_order.size());
@@ -300,14 +247,6 @@ InspectSummary build_summary(
       result.identity = it->second.sniffed_identity;
     }
     summary.topics.push_back(std::move(result));
-  }
-  summary.info_topics.reserve(info_specs.size());
-  for (const auto & info : info_specs) {
-    InfoTopicInspect it;
-    it.topic = info.topic;
-    it.type = info.type;
-    it.has_messages = topics_with_messages.count(info.topic) > 0;
-    summary.info_topics.push_back(std::move(it));
   }
   return summary;
 }
@@ -390,15 +329,11 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
     }
   }
 
-  // Partition into packet / info topics, preserving bag order for
-  // reporting stability.
+  // Filter to packet topics, preserving bag order for reporting stability.
   std::vector<PacketTopicSpec> packet_order;
   std::unordered_map<int, std::string> topic_id_to_name;
   TopicStateMap topic_states;
   std::unordered_map<std::string, int> packet_topic_id;
-  InfoStateMap info_states;
-  std::unordered_map<std::string, int> info_topic_id;
-  std::vector<InfoTopicSpec> info_specs;
   for (const auto & r : topics_rows) {
     if (is_packet_type(r.type)) {
       packet_order.push_back({r.name, r.type});
@@ -411,15 +346,6 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
       topic_states.emplace(r.name, std::move(state));
       packet_topic_id.emplace(r.name, r.id);
       topic_id_to_name.emplace(r.id, r.name);
-    } else if (is_info_type(r.type)) {
-      info_specs.push_back({r.name, r.type});
-      InfoState info;
-      info.topic = r.name;
-      info.type = r.type;
-      info.info_source = make_info_source(r.type);
-      info_states.emplace(r.name, std::move(info));
-      info_topic_id.emplace(r.name, r.id);
-      topic_id_to_name.emplace(r.id, r.name);
     }
   }
 
@@ -427,31 +353,13 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
     return {};
   }
 
-  const auto global_info_topic = unique_info_topic(info_specs);
-  if (!global_info_topic.empty()) {
-    auto info_it = info_states.find(global_info_topic);
-    if (info_it != info_states.end()) {
-      for (auto & [topic_name, state] : topic_states) {
-        if (state.vendor_hint == Vendor::ROBOSENSE) {
-          info_it->second.target_packet_topics.push_back(topic_name);
-        }
-      }
-    }
-  }
-
-  // Build the bind list for the aggregate query: every packet topic id
-  // plus the unique info topic id (if any). Empty topics cannot satisfy
-  // GROUP BY so they naturally drop out -- that's exactly how we derive
-  // `has_messages` without a second scan.
+  // Build the bind list for the aggregate query: every packet topic id.
+  // Empty topics cannot satisfy GROUP BY so they naturally drop out --
+  // that's exactly how we derive `has_messages` without a second scan.
   std::vector<int> target_ids;
-  target_ids.reserve(packet_topic_id.size() + (global_info_topic.empty() ? 0 : 1));
+  target_ids.reserve(packet_topic_id.size());
   for (const auto & entry : packet_topic_id) {
     target_ids.push_back(entry.second);
-  }
-  if (!global_info_topic.empty()) {
-    if (auto it = info_topic_id.find(global_info_topic); it != info_topic_id.end()) {
-      target_ids.push_back(it->second);
-    }
   }
 
   // One row per non-empty target topic: the first inserted message's
@@ -489,8 +397,8 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
       topics_with_messages.insert(name_it->second);
 
       // Wrap the raw CDR-serialized bytes in a rclcpp::SerializedMessage
-      // without copying them a second time downstream -- packet_source /
-      // info_source only read from the buffer.
+      // without copying them a second time downstream -- packet_source
+      // only reads from the buffer.
       rclcpp::SerializedMessage serialized(static_cast<std::size_t>(blob_size));
       auto & raw = serialized.get_rcl_serialized_message();
       std::memcpy(raw.buffer, blob, static_cast<std::size_t>(blob_size));
@@ -504,22 +412,12 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
         for (const auto & pkt : packets) {
           feed_packet(ts_it->second, pkt, nullptr);
         }
-      } else if (auto is_it = info_states.find(name_it->second); is_it != info_states.end()) {
-        if (!is_it->second.info_source || is_it->second.target_packet_topics.empty()) {
-          continue;
-        }
-        auto info_bytes = is_it->second.info_source->extract(serialized);
-        if (!info_bytes.empty()) {
-          feed_info_to_targets(is_it->second, info_bytes, topic_states);
-        }
       }
     }
   }
 
-  // DIFOP may have resolved the model after the initial data-packet
-  // sniff ran. Refresh each sniffed_identity from the decoder so the
-  // summary reflects the latest known identity without feeding more
-  // packets.
+  // Refresh each sniffed_identity from the decoder so the summary
+  // reflects the latest known identity without feeding more packets.
   for (auto & entry : topic_states) {
     auto & state = entry.second;
     if (auto decoder_id = state.decoder.identity(); decoder_id) {
@@ -527,7 +425,7 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
     }
   }
 
-  return build_summary(packet_order, topic_states, topics_with_messages, info_specs);
+  return build_summary(packet_order, topic_states, topics_with_messages);
 }
 
 }  // namespace
@@ -579,48 +477,17 @@ InspectSummary inspect(const std::string & input_path)
     topic_states.emplace(pt.topic, std::move(state));
   }
 
-  InfoStateMap info_states;
-  info_states.reserve(discovered.info_topics.size());
-  for (const auto & it : discovered.info_topics) {
-    InfoState info;
-    info.topic = it.topic;
-    info.type = it.type;
-    info.info_source = make_info_source(it.type);
-    info_states.emplace(it.topic, std::move(info));
-  }
-  // When the bag contains exactly one info topic, route it to every
-  // Robosense packet topic. With zero or multiple info topics we cannot
-  // decide ownership without a topic-name heuristic, so we stay silent
-  // and leave pairing to an explicit --info-topic override. Model
-  // identification does not depend on this step.
-  const auto global_info_topic = unique_info_topic(discovered.info_topics);
-  if (!global_info_topic.empty()) {
-    auto info_it = info_states.find(global_info_topic);
-    if (info_it != info_states.end()) {
-      for (auto & [topic_name, state] : topic_states) {
-        if (state.vendor_hint == Vendor::ROBOSENSE) {
-          info_it->second.target_packet_topics.push_back(topic_name);
-        }
-      }
-    }
-  }
-
-  // Fast path: read only the first message per packet topic (plus the
-  // first unique-paired info topic message, if any) — just enough to
-  // sniff vendor and model. Stop as soon as every relevant topic has
-  // been touched once so large bags return quickly.
-  const bool needs_info = !global_info_topic.empty();
+  // Fast path: read only the first message per packet topic — just
+  // enough to sniff vendor and model. Stop as soon as every relevant
+  // topic has been touched once so large bags return quickly.
 
   // 1) Restrict the storage reader to the topics we actually inspect.
   // Skipping unrelated topics (e.g. /tf, /imu, camera streams) at the
   // storage layer is far cheaper than reading+discarding their bytes.
   rosbag2_storage::StorageFilter filter;
-  filter.topics.reserve(discovered.packet_topics.size() + (needs_info ? 1 : 0));
+  filter.topics.reserve(discovered.packet_topics.size());
   for (const auto & pt : discovered.packet_topics) {
     filter.topics.push_back(pt.topic);
-  }
-  if (needs_info) {
-    filter.topics.push_back(global_info_topic);
   }
   reader.set_filter(filter);
 
@@ -637,22 +504,17 @@ InspectSummary inspect(const std::string & input_path)
     message_counts.emplace(info.topic_metadata.name, info.message_count);
   }
   std::unordered_set<std::string> packet_done;
-  std::unordered_set<std::string> info_done_set;
   for (const auto & [name, count] : message_counts) {
     if (count != 0) {
       continue;
     }
     if (topic_states.count(name)) {
       packet_done.insert(name);
-    } else if (needs_info && name == global_info_topic) {
-      info_done_set.insert(name);
     }
   }
 
   while (reader.has_next()) {
-    const bool all_packets_done = packet_done.size() == topic_states.size();
-    const bool info_done = !needs_info || info_done_set.count(global_info_topic) > 0;
-    if (all_packets_done && info_done) {
+    if (packet_done.size() == topic_states.size()) {
       break;
     }
 
@@ -670,30 +532,11 @@ InspectSummary inspect(const std::string & input_path)
       for (const auto & pkt : packets) {
         feed_packet(it->second, pkt, nullptr);
       }
-      continue;
-    }
-    if (needs_info) {
-      if (auto it = info_states.find(bag_msg->topic_name); it != info_states.end()) {
-        if (info_done_set.count(bag_msg->topic_name)) {
-          continue;
-        }
-        info_done_set.insert(bag_msg->topic_name);
-        if (!it->second.info_source || it->second.target_packet_topics.empty()) {
-          continue;
-        }
-        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-        auto info_bytes = it->second.info_source->extract(serialized);
-        if (!info_bytes.empty()) {
-          feed_info_to_targets(it->second, info_bytes, topic_states);
-        }
-      }
     }
   }
 
-  // DIFOP may have resolved the model after the initial data-packet
-  // sniff ran. Refresh each sniffed_identity from the decoder so the
-  // summary reflects the latest known identity without feeding more
-  // packets.
+  // Refresh each sniffed_identity from the decoder so the summary
+  // reflects the latest known identity without feeding more packets.
   for (auto & entry : topic_states) {
     auto & state = entry.second;
     if (auto decoder_id = state.decoder.identity(); decoder_id) {
@@ -707,8 +550,7 @@ InspectSummary inspect(const std::string & input_path)
       topics_with_messages.insert(name);
     }
   }
-  return build_summary(
-    discovered.packet_topics, topic_states, topics_with_messages, discovered.info_topics);
+  return build_summary(discovered.packet_topics, topic_states, topics_with_messages);
 }
 
 namespace
@@ -758,13 +600,8 @@ std::vector<ConvertPlanEntry> plan_convert(
 {
   // Reuse inspect() so dry-run sees the same sniffed identities as the
   // full convert() flow. inspect() reports every packet topic (including
-  // zero-message ones) and every info topic present in the bag.
+  // zero-message ones) present in the bag.
   const auto summary = inspect(input_path);
-
-  std::unordered_set<std::string> info_topics_in_bag;
-  for (const auto & info : summary.info_topics) {
-    info_topics_in_bag.insert(info.topic);
-  }
 
   std::vector<ConvertPlanEntry> entries;
   entries.reserve(summary.topics.size());
@@ -811,13 +648,9 @@ std::vector<ConvertPlanEntry> plan_convert(
       if (!match) {
         entry.status = "skipped";
         entry.message = "no matching rule";
-      } else if (!match->info_topic.empty() && !info_topics_in_bag.count(match->info_topic)) {
-        entry.status = "error";
-        entry.message = "info topic '" + match->info_topic + "' not in bag";
       } else {
         entry.out_topic = match->out_topic;
         entry.frame_id = match->frame_id;
-        entry.info_topic = match->info_topic;
         entry.status = "ok";
       }
     } catch (const std::runtime_error &) {
@@ -855,8 +688,8 @@ ConvertResult convert(const ConvertOptions & options)
 
   // Filter mapping-matched topics by the SupportRegistry. Topics the
   // registry rejects are demoted to passthrough so their raw packets
-  // still land in the output bag (Continental radar, unidentified
-  // streams, etc.).
+  // still land in the output bag (Continental radar, Robosense,
+  // unidentified streams, etc.).
   const auto & registry = SupportRegistry::instance();
   std::vector<ResolvedRule> decoded_rules;
   decoded_rules.reserve(partition.resolved.size());
@@ -877,24 +710,6 @@ ConvertResult convert(const ConvertOptions & options)
   decoded_topic_names.reserve(decoded_rules.size());
   for (const auto & r : decoded_rules) {
     decoded_topic_names.insert(r.in_topic);
-  }
-
-  // Validate that every info_topic promised by a decoded rule actually
-  // exists in the bag. Demoted rules are not validated -- their packets
-  // are passthrough only, no info feed is needed.
-  std::unordered_map<std::string, std::string> info_topic_to_type;
-  for (const auto & it : discovered.info_topics) {
-    info_topic_to_type.emplace(it.topic, it.type);
-  }
-  for (const auto & r : decoded_rules) {
-    if (r.match.info_topic.empty()) {
-      continue;
-    }
-    if (!info_topic_to_type.count(r.match.info_topic)) {
-      throw std::runtime_error(
-        "info topic '" + r.match.info_topic + "' (required by rule for '" + r.in_topic +
-        "') not found in bag");
-    }
   }
 
   // Snapshot every topic in the bag with its original metadata so we
@@ -953,8 +768,6 @@ ConvertResult convert(const ConvertOptions & options)
     std::unordered_map<std::string, std::string> out_topic_by_in;
     std::unordered_map<std::string, std::string> frame_id_by_in;
     std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
-    std::unordered_map<std::string, std::unique_ptr<InfoSource>> info_sources;  // info -> source
-    std::unordered_map<std::string, std::vector<std::string>> info_targets;     // info -> in_topics
     std::unordered_set<std::string> created_out_topics;
 
     // 1) Create PointCloud2 output topics for every decoded rule.
@@ -988,22 +801,10 @@ ConvertResult convert(const ConvertOptions & options)
       meta.type = "sensor_msgs/msg/PointCloud2";
       meta.serialization_format = "cdr";
       writer.create_topic(meta);
-
-      if (!r.match.info_topic.empty()) {
-        // One InfoSource per unique info_topic; multiple packet topics may
-        // fan out from the same info stream.
-        if (!info_sources.count(r.match.info_topic)) {
-          info_sources.emplace(
-            r.match.info_topic, make_info_source(info_topic_to_type[r.match.info_topic]));
-        }
-        info_targets[r.match.info_topic].push_back(r.in_topic);
-      }
     }
 
     // 2) Create passthrough topics for everything else, preserving the
-    // original type and serialization_format. Info topics that feed a
-    // decoded rule are still passed through -- their raw bytes belong to
-    // the bag regardless of whether they were also used by a decoder.
+    // original type and serialization_format.
     std::unordered_set<std::string> passthrough_topic_set;
     for (const auto & meta : all_topic_metadata) {
       if (decoded_topic_names.count(meta.name)) {
@@ -1050,28 +851,10 @@ ConvertResult convert(const ConvertOptions & options)
         continue;
       }
 
-      // 3b) Info topic used by a decoded rule: feed the decoder AND
-      // fall through to passthrough below so the original info bytes
-      // are preserved in the output bag.
-      if (auto it = info_sources.find(bag_msg->topic_name); it != info_sources.end()) {
-        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-        auto info_bytes = it->second->extract(serialized);
-        if (!info_bytes.empty()) {
-          for (const auto & target : info_targets[bag_msg->topic_name]) {
-            auto ts_it = states.find(target);
-            if (ts_it == states.end()) {
-              continue;
-            }
-            ++ts_it->second.info_packets;
-            ts_it->second.decoder.feed_info(info_bytes);
-          }
-        }
-      }
-
-      // 3c) Passthrough: write the serialized message verbatim under
-      // its original topic name. Covers info topics (fallthrough from
-      // 3b), unmatched packet topics, demoted packet topics, and any
-      // unrelated streams (TF, IMU, camera, ...).
+      // 3b) Passthrough: write the serialized message verbatim under
+      // its original topic name. Covers unmatched packet topics, demoted
+      // packet topics (Robosense / Continental radar / unidentified),
+      // and any unrelated streams (TF, IMU, camera, ...).
       if (passthrough_topic_set.count(bag_msg->topic_name)) {
         writer.write(bag_msg);
       }
@@ -1120,10 +903,8 @@ ConvertResult convert(const ConvertOptions & options)
     tr.in_topic = r.in_topic;
     tr.out_topic = r.match.out_topic;
     tr.frame_id = r.match.frame_id;
-    tr.info_topic = r.match.info_topic;
     tr.identity = state.sniffed_identity ? state.sniffed_identity : state.decoder.identity();
     tr.data_packets = state.data_packets;
-    tr.info_packets = state.info_packets;
     tr.clouds_written = state.clouds_produced;
     result.topics.push_back(std::move(tr));
   }

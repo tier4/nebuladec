@@ -15,7 +15,6 @@
 #include "nebuladec_adapters/decoder.hpp"
 
 #include "nebuladec_adapters/hesai_adapter.hpp"
-#include "nebuladec_adapters/robosense_adapter.hpp"
 #include "nebuladec_adapters/seyond_adapter.hpp"
 #include "nebuladec_adapters/velodyne_adapter.hpp"
 
@@ -51,14 +50,11 @@ std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
       return adapter;
     }
     case Vendor::ROBOSENSE:
-      // Robosense needs DIFOP to populate its calibration, so the
-      // adapter is not yet is_ready() at construction. Returning it
-      // anyway lets Decoder::feed_info() drive the initialisation.
-      // UNKNOWN model is rejected here since it can never become ready.
-      if (identity.model == nebula::drivers::SensorModel::UNKNOWN) {
-        return nullptr;
-      }
-      return std::make_unique<adapters::RobosenseAdapter>(identity);
+      // Robosense: identified, not decoded. The packet sniffer still
+      // resolves vendor + model so callers can report what the bag
+      // contains, but nebuladec_adapters does not emit point clouds for
+      // Robosense streams.
+      return nullptr;
     case Vendor::CONTINENTAL:
       // Continental radar: identified, not decoded. nebuladec_adapters
       // does not (yet) emit point clouds from ARS548 / SRR520 packets.
@@ -77,7 +73,7 @@ struct Decoder::Impl
   Vendor vendor_hint{Vendor::UNKNOWN};
   /// Set once the sniffer has returned a resolved identity so subsequent
   /// packets skip the re-sniff path even when no adapter is available
-  /// (e.g. CONTINENTAL radar — identified, not decoded).
+  /// (e.g. CONTINENTAL radar / ROBOSENSE — identified, not decoded).
   bool identity_locked{false};
   std::size_t min_points{1024};
 };
@@ -104,11 +100,13 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::feed(
     // model) so the model-search would otherwise stop on the first
     // packet even before the real model has been seen. Requiring either
     // a ready adapter or a resolved model keeps the search alive for
-    // LiDAR while still terminating it for radar (vendor-only identity
-    // with no adapter to build).
+    // LiDAR while still terminating it for vendors that are only
+    // identified (CONTINENTAL radar, ROBOSENSE).
     const bool has_model =
       sniffed->model != nebula::drivers::SensorModel::UNKNOWN || sniffed->seyond_model.has_value();
-    if (impl_->adapter || (sniffed->vendor == Vendor::CONTINENTAL) || has_model) {
+    if (
+      impl_->adapter || sniffed->vendor == Vendor::CONTINENTAL ||
+      sniffed->vendor == Vendor::ROBOSENSE || has_model) {
       impl_->identity_locked = true;
     }
     if (!impl_->adapter) {
@@ -124,13 +122,6 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::feed(
     return std::nullopt;
   }
   return cloud;
-}
-
-void Decoder::feed_info(const std::vector<std::uint8_t> & packet)
-{
-  if (impl_->adapter) {
-    impl_->adapter->feed_info(packet);
-  }
 }
 
 std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::flush()

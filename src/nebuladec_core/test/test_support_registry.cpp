@@ -35,12 +35,18 @@ const SupportRegistry & registry()
 // is_vendor_supported
 // --------------------------------------------------------------------------
 
-TEST(SupportRegistry, LidarVendorsAreSupported)
+TEST(SupportRegistry, DecodedLidarVendorsAreSupported)
 {
   EXPECT_TRUE(registry().is_vendor_supported(Vendor::HESAI));
   EXPECT_TRUE(registry().is_vendor_supported(Vendor::VELODYNE));
-  EXPECT_TRUE(registry().is_vendor_supported(Vendor::ROBOSENSE));
   EXPECT_TRUE(registry().is_vendor_supported(Vendor::SEYOND));
+}
+
+TEST(SupportRegistry, RobosenseIsIdentifiedButNotDecoded)
+{
+  // Robosense LiDAR is sniffed for vendor/model but nebuladec_adapters
+  // does not provide a PointCloud2 adapter for it.
+  EXPECT_FALSE(registry().is_vendor_supported(Vendor::ROBOSENSE));
 }
 
 TEST(SupportRegistry, ContinentalRadarIsNotSupported)
@@ -168,13 +174,15 @@ TEST(SupportRegistryCheck, SeyondWithoutSeyondModelIsModelNotSupported)
 // supported_vendors
 // --------------------------------------------------------------------------
 
-TEST(SupportRegistry, SupportedVendorListCoversAllLidarVendors)
+TEST(SupportRegistry, SupportedVendorListCoversDecodedLidarVendors)
 {
   const auto & list = registry().supported_vendors();
-  EXPECT_EQ(list.size(), 4U);
-  // CONTINENTAL and UNKNOWN must not appear.
+  EXPECT_EQ(list.size(), 3U);
+  // CONTINENTAL, ROBOSENSE, and UNKNOWN must not appear (identified
+  // vendors that lack a PointCloud2 adapter are excluded).
   for (auto v : list) {
     EXPECT_NE(v, Vendor::CONTINENTAL);
+    EXPECT_NE(v, Vendor::ROBOSENSE);
     EXPECT_NE(v, Vendor::UNKNOWN);
   }
 }

@@ -17,7 +17,6 @@ ament_auto_find_build_dependencies()
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/decoder.cpp
   src/hesai_adapter.cpp
-  src/robosense_adapter.cpp
   src/seyond_adapter.cpp
   src/velodyne_adapter.cpp
 )
@@ -42,9 +41,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_velodyne_adapter test/test_velodyne_adapter.cpp)
   target_link_libraries(test_velodyne_adapter ${PROJECT_NAME})
-
-  ament_add_gtest(test_robosense_adapter test/test_robosense_adapter.cpp)
-  target_link_libraries(test_robosense_adapter ${PROJECT_NAME})
 
   ament_add_gtest(test_decoder_integration test/test_decoder_integration.cpp)
   target_link_libraries(test_decoder_integration ${PROJECT_NAME})

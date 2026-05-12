@@ -217,13 +217,11 @@ int run_convert(const ConvertCliOptions & opts)
     }
 
     tabulate::Table table;
-    table.add_row(
-      {"in_topic", "out_topic", "frame_id", "identity", "data_pkts", "info_pkts", "clouds"});
+    table.add_row({"in_topic", "out_topic", "frame_id", "identity", "data_pkts", "clouds"});
     for (const auto & t : result.topics) {
       table.add_row(
         {t.in_topic, t.out_topic, t.frame_id, format_identity(t.identity),
-         std::to_string(t.data_packets), std::to_string(t.info_packets),
-         std::to_string(t.clouds_written)});
+         std::to_string(t.data_packets), std::to_string(t.clouds_written)});
     }
     table[0].format().font_style({tabulate::FontStyle::bold});
     std::cout << table << "\n";

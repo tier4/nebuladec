@@ -16,7 +16,7 @@
 #define NEBULADEC_CORE__TOPIC_MAPPING_HPP_
 
 #include <cstddef>
-#include <optional>
+#include <optional>  // for std::optional return type of resolve()
 #include <regex>
 #include <string>
 #include <vector>
@@ -26,15 +26,14 @@ namespace nebuladec
 
 /// @brief One entry in the user-supplied YAML mapping table.
 ///
-/// `in_pattern`, `out_template` (and, if present, `info_pattern` /
-/// `frame_id_template`) may reference `<name>` placeholders. Each
-/// placeholder captures exactly one path segment (`[^/]+`). Names repeated
-/// inside `in_pattern` are backreferenced, so they must resolve to the
-/// same captured value for the rule to match.
+/// `in_pattern`, `out_template`, and `frame_id_template` may reference
+/// `<name>` placeholders. Each placeholder captures exactly one path
+/// segment (`[^/]+`). Names repeated inside `in_pattern` are
+/// backreferenced, so they must resolve to the same captured value for
+/// the rule to match.
 struct MappingRule
 {
   std::string in_pattern;
-  std::optional<std::string> info_pattern;
   std::string out_template;
   std::string frame_id_template;
   /// true when `in_pattern` starts with `/`. Every pattern in the same
@@ -48,10 +47,6 @@ struct MappingMatch
 {
   std::size_t rule_index{0};
   std::string out_topic;
-  /// Empty when the rule has no `info_topic` field. Not a std::optional so
-  /// downstream callers that just want to compare strings have one less
-  /// null-check to write.
-  std::string info_topic;
   std::string frame_id;
 };
 

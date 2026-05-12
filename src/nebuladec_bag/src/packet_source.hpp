@@ -39,7 +39,9 @@ struct PacketBytes
 /// Each Nebula-facing ROS message type (NebulaPackets, PandarScan,
 /// VelodyneScan, RobosenseScan) wraps a vector of per-UDP-packet byte
 /// payloads; this interface hides the deserialisation differences from
-/// the rest of the bag layer.
+/// the rest of the bag layer. RobosenseScan is read for vendor / sensor
+/// model identification only — nebuladec_adapters does not produce a
+/// PointCloud2 stream for Robosense data.
 class PacketSource
 {
 public:
@@ -47,26 +49,12 @@ public:
   virtual std::vector<PacketBytes> extract(const rclcpp::SerializedMessage & msg) = 0;
 };
 
-class InfoSource
-{
-public:
-  virtual ~InfoSource() = default;
-  virtual std::vector<std::uint8_t> extract(const rclcpp::SerializedMessage & msg) = 0;
-};
-
 /// @brief Return non-null when `type_name` is a packet-stream type we
-/// know how to decode.
+/// know how to read.
 std::unique_ptr<PacketSource> make_packet_source(const std::string & type_name);
-
-/// @brief Return non-null for info-packet type names (currently only the
-/// Robosense DIFOP message).
-std::unique_ptr<InfoSource> make_info_source(const std::string & type_name);
 
 /// @brief Is this ROS 2 message type one of the data-packet streams?
 bool is_packet_type(const std::string & type_name);
-
-/// @brief Is this ROS 2 message type the Robosense info-packet stream?
-bool is_info_type(const std::string & type_name);
 
 /// @brief Infer the sensor vendor from a packet-stream message type.
 ///
