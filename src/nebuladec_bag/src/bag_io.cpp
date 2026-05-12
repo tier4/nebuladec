@@ -445,8 +445,8 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
   // `has_messages` without a second scan.
   std::vector<int> target_ids;
   target_ids.reserve(packet_topic_id.size() + (global_info_topic.empty() ? 0 : 1));
-  for (const auto & [_, id] : packet_topic_id) {
-    target_ids.push_back(id);
+  for (const auto & entry : packet_topic_id) {
+    target_ids.push_back(entry.second);
   }
   if (!global_info_topic.empty()) {
     if (auto it = info_topic_id.find(global_info_topic); it != info_topic_id.end()) {
@@ -520,7 +520,8 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
   // sniff ran. Refresh each sniffed_identity from the decoder so the
   // summary reflects the latest known identity without feeding more
   // packets.
-  for (auto & [_, state] : topic_states) {
+  for (auto & entry : topic_states) {
+    auto & state = entry.second;
     if (auto decoder_id = state.decoder.identity(); decoder_id) {
       state.sniffed_identity = decoder_id;
     }
@@ -693,7 +694,8 @@ InspectSummary inspect(const std::string & input_path)
   // sniff ran. Refresh each sniffed_identity from the decoder so the
   // summary reflects the latest known identity without feeding more
   // packets.
-  for (auto & [_, state] : topic_states) {
+  for (auto & entry : topic_states) {
+    auto & state = entry.second;
     if (auto decoder_id = state.decoder.identity(); decoder_id) {
       state.sniffed_identity = decoder_id;
     }
@@ -912,24 +914,27 @@ ConvertResult convert(const ConvertOptions & options)
   // closed.
   const fs::path final_output_path{options.output_path};
   const bool collapse_to_file = !in_spec.is_directory;
-  fs::path writer_uri = final_output_path;
 
   if (fs::exists(final_output_path)) {
     throw std::runtime_error(
       "output path already exists: " + final_output_path.string() + " (refusing to overwrite)");
   }
 
-  if (collapse_to_file) {
+  const fs::path writer_uri = [&]() -> fs::path {
+    if (!collapse_to_file) {
+      return final_output_path;
+    }
     fs::path parent = final_output_path.parent_path();
     if (parent.empty()) {
       parent = ".";
     }
-    writer_uri = parent / (std::string{"."} + final_output_path.filename().string() +
-                           ".nebuladec_writer_scratch");
+    fs::path scratch = parent / (std::string{"."} + final_output_path.filename().string() +
+                                 ".nebuladec_writer_scratch");
     // Defensive cleanup for leftovers from a prior failed run; Writer::
     // open() fails if the uri already exists.
-    fs::remove_all(writer_uri);
-  }
+    fs::remove_all(scratch);
+    return scratch;
+  }();
 
   // Only `states` needs to outlive the writer scope -- ConvertResult
   // assembly below reads per-topic decoder stats from it. Every other
