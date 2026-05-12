@@ -40,6 +40,15 @@ jobs:
         shell: bash
         run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
+      - name: Initialise rosdep
+        # ros:humble-ros-base ships rosdep but does not pre-populate its
+        # cache, so the first `rosdep install` invoked by ./setup.sh
+        # otherwise fails with "your rosdep installation has not been
+        # initialized yet". The container image already ran `rosdep init`,
+        # so only `rosdep update` is required here.
+        shell: bash
+        run: rosdep update --rosdistro humble
+
       - name: Install workspace dependencies
         shell: bash
         run: |
