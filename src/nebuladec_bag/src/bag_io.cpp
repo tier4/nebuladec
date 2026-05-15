@@ -253,44 +253,199 @@ InspectSummary build_summary(
 
 /// Cleanup wrapper so early returns always close the DB / finalize the
 /// statement. Keeps the inspect_sqlite3_file body linear.
+///
+/// Both guards own a raw libsqlite3 handle, so copy/move must be banned
+/// (C.21 / R.11): a duplicated pointer would lead to double-finalize /
+/// double-close once both copies go out of scope. The guards are only
+/// ever used as scoped locals, so suppressing all four special members
+/// is sufficient.
 struct SqliteStmtGuard
 {
   sqlite3_stmt * stmt{nullptr};
+  SqliteStmtGuard() = default;
   ~SqliteStmtGuard()
   {
     if (stmt) {
       sqlite3_finalize(stmt);
     }
   }
+  SqliteStmtGuard(const SqliteStmtGuard &) = delete;
+  SqliteStmtGuard & operator=(const SqliteStmtGuard &) = delete;
+  SqliteStmtGuard(SqliteStmtGuard &&) = delete;
+  SqliteStmtGuard & operator=(SqliteStmtGuard &&) = delete;
 };
 
 struct SqliteGuard
 {
   sqlite3 * db{nullptr};
+  SqliteGuard() = default;
   ~SqliteGuard()
   {
     if (db) {
       sqlite3_close(db);
     }
   }
+  SqliteGuard(const SqliteGuard &) = delete;
+  SqliteGuard & operator=(const SqliteGuard &) = delete;
+  SqliteGuard(SqliteGuard &&) = delete;
+  SqliteGuard & operator=(SqliteGuard &&) = delete;
 };
+
+struct Sqlite3TopicRow
+{
+  int id{0};
+  std::string name;
+  std::string type;
+};
+
+/// Mirror each topic's decoder identity (when known) onto its
+/// `sniffed_identity` so the summary reflects the latest information
+/// without re-feeding packets. Shared between the SQLite3 fast path and
+/// the rosbag2 inspect path.
+void refresh_sniffed_identities(TopicStateMap & states)
+{
+  for (auto & entry : states) {
+    auto & state = entry.second;
+    if (auto decoder_id = state.decoder.identity(); decoder_id) {
+      state.sniffed_identity = decoder_id;
+    }
+  }
+}
+
+/// `SELECT id, name, type FROM topics` returned verbatim, in bag-insertion
+/// order. Used by the SQLite3 fast inspect path to build the packet-topic
+/// state map without going through `rosbag2_cpp::Reader`.
+std::vector<Sqlite3TopicRow> query_sqlite3_topics(sqlite3 * db)
+{
+  std::vector<Sqlite3TopicRow> rows;
+  SqliteStmtGuard sg;
+  if (
+    sqlite3_prepare_v2(db, "SELECT id, name, type FROM topics", -1, &sg.stmt, nullptr) !=
+    SQLITE_OK) {
+    throw std::runtime_error(std::string{"failed to query topics: "} + sqlite3_errmsg(db));
+  }
+  while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+    Sqlite3TopicRow row;
+    row.id = sqlite3_column_int(sg.stmt, 0);
+    row.name = std::string{reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 1))};
+    row.type = std::string{reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 2))};
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
+
+/// Per-packet bookkeeping built once per inspect_sqlite3_file call.
+/// `target_ids` is the input to the aggregate first-message query;
+/// `topic_id_to_name` maps the int topic_id rows in the bag back to
+/// topic names for the summary.
+struct Sqlite3PacketIndex
+{
+  std::vector<PacketTopicSpec> packet_order;
+  std::unordered_map<int, std::string> topic_id_to_name;
+  TopicStateMap topic_states;
+  std::vector<int> target_ids;
+};
+
+Sqlite3PacketIndex build_packet_index_from_rows(const std::vector<Sqlite3TopicRow> & rows)
+{
+  Sqlite3PacketIndex idx;
+  for (const auto & r : rows) {
+    if (!is_packet_type(r.type)) {
+      continue;
+    }
+    idx.packet_order.push_back({r.name, r.type});
+    TopicState state;
+    state.topic = r.name;
+    state.type = r.type;
+    state.vendor_hint = vendor_from_message_type(r.type);
+    state.packet_source = make_packet_source(r.type);
+    state.decoder.set_vendor_hint(state.vendor_hint);
+    idx.topic_states.emplace(r.name, std::move(state));
+    idx.topic_id_to_name.emplace(r.id, r.name);
+    idx.target_ids.push_back(r.id);
+  }
+  return idx;
+}
+
+/// Run the aggregate first-message query and feed each row through its
+/// `TopicState`. `topics_with_messages` is populated as a side effect:
+/// every non-empty packet topic produces exactly one row, so this also
+/// derives the `has_messages` flag without a second scan.
+///
+/// `MIN(id)` is used in the inner aggregate (not `MIN(timestamp)`) so it
+/// resolves directly off the integer primary key. rosbag2 writes rows in
+/// timestamp order so the two coincide in practice, and for vendor/model
+/// sniffing any early packet is sufficient.
+void sniff_first_messages_sqlite3(
+  sqlite3 * db, const std::vector<int> & target_ids,
+  const std::unordered_map<int, std::string> & topic_id_to_name, TopicStateMap & topic_states,
+  std::unordered_set<std::string> & topics_with_messages)
+{
+  std::string q =
+    "SELECT data, topic_id FROM messages WHERE id IN ("
+    "SELECT MIN(id) FROM messages WHERE topic_id IN (";
+  for (std::size_t i = 0; i < target_ids.size(); ++i) {
+    q += (i == 0) ? "?" : ",?";
+  }
+  q += ") GROUP BY topic_id)";
+
+  SqliteStmtGuard sg;
+  if (sqlite3_prepare_v2(db, q.c_str(), -1, &sg.stmt, nullptr) != SQLITE_OK) {
+    throw std::runtime_error(
+      std::string{"failed to prepare first-message query: "} + sqlite3_errmsg(db));
+  }
+  for (std::size_t i = 0; i < target_ids.size(); ++i) {
+    sqlite3_bind_int(sg.stmt, static_cast<int>(i + 1), target_ids[i]);
+  }
+
+  while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+    const void * blob = sqlite3_column_blob(sg.stmt, 0);
+    const int blob_size = sqlite3_column_bytes(sg.stmt, 0);
+    const int topic_id = sqlite3_column_int(sg.stmt, 1);
+    // sqlite3_column_bytes() returns int; guard against negative values
+    // so the size_t casts below cannot silently overflow into a huge
+    // buffer allocation (ES.46 / I.6).
+    if (blob_size < 0) {
+      continue;
+    }
+    auto name_it = topic_id_to_name.find(topic_id);
+    if (name_it == topic_id_to_name.end()) {
+      continue;
+    }
+    topics_with_messages.insert(name_it->second);
+
+    const auto blob_bytes = static_cast<std::size_t>(blob_size);
+    // Wrap the raw CDR-serialized bytes in a rclcpp::SerializedMessage
+    // without copying them a second time downstream -- packet_source
+    // only reads from the buffer.
+    rclcpp::SerializedMessage serialized(blob_bytes);
+    auto & raw = serialized.get_rcl_serialized_message();
+    std::memcpy(raw.buffer, blob, blob_bytes);
+    raw.buffer_length = blob_bytes;
+
+    auto ts_it = topic_states.find(name_it->second);
+    if (ts_it == topic_states.end() || !ts_it->second.packet_source) {
+      continue;
+    }
+    auto packets = ts_it->second.packet_source->extract(serialized);
+    for (const auto & pkt : packets) {
+      feed_packet(ts_it->second, pkt, nullptr);
+    }
+  }
+}
 
 /// Inspect a bare `.db3` file without going through `rosbag2_cpp::Reader`.
 ///
 /// `rosbag2_cpp::Reader::open()` reconstructs `BagMetadata` (COUNT / MIN
 /// / MAX over `messages`) whenever `metadata.yaml` is absent, which on a
 /// 17GB / 941k-row bag takes ~16s. inspect() does not consume any of that
-/// metadata, so we bypass the reader and talk to libsqlite3 directly:
+/// metadata, so we bypass the reader and talk to libsqlite3 directly via
+/// the helpers above:
 ///
-///   1) `SELECT id, name, type FROM topics`                          (~1ms)
-///   2) `SELECT data, topic_id FROM messages WHERE id IN (
-///         SELECT MIN(id) FROM messages WHERE topic_id IN (…)
-///         GROUP BY topic_id)`                                        (~0.1s)
-///
-/// Step 2 returns exactly one row per non-empty target topic (empty
-/// topics drop out of the GROUP BY), so the cost scales with the size of
-/// the `messages` table but is a single aggregate scan instead of the
-/// full JOIN + per-topic COUNT/MIN/MAX rosbag2 does on open.
+///   1) `query_sqlite3_topics`          -- SELECT id, name, type FROM topics
+///   2) `build_packet_index_from_rows`  -- filter to packet topics
+///   3) `sniff_first_messages_sqlite3`  -- aggregate first-message scan
+///   4) `refresh_sniffed_identities`    -- mirror decoder identity
 InspectSummary inspect_sqlite3_file(const InputSpec & spec)
 {
   SqliteGuard db_guard;
@@ -305,127 +460,18 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
     throw std::runtime_error(msg);
   }
 
-  struct TopicRow
-  {
-    int id;
-    std::string name;
-    std::string type;
-  };
-  std::vector<TopicRow> topics_rows;
-  {
-    SqliteStmtGuard sg;
-    if (
-      sqlite3_prepare_v2(db_guard.db, "SELECT id, name, type FROM topics", -1, &sg.stmt, nullptr) !=
-      SQLITE_OK) {
-      throw std::runtime_error(
-        std::string{"failed to query topics: "} + sqlite3_errmsg(db_guard.db));
-    }
-    while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
-      TopicRow row;
-      row.id = sqlite3_column_int(sg.stmt, 0);
-      row.name = reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 1));
-      row.type = reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 2));
-      topics_rows.push_back(std::move(row));
-    }
-  }
-
-  // Filter to packet topics, preserving bag order for reporting stability.
-  std::vector<PacketTopicSpec> packet_order;
-  std::unordered_map<int, std::string> topic_id_to_name;
-  TopicStateMap topic_states;
-  std::unordered_map<std::string, int> packet_topic_id;
-  for (const auto & r : topics_rows) {
-    if (is_packet_type(r.type)) {
-      packet_order.push_back({r.name, r.type});
-      TopicState state;
-      state.topic = r.name;
-      state.type = r.type;
-      state.vendor_hint = vendor_from_message_type(r.type);
-      state.packet_source = make_packet_source(r.type);
-      state.decoder.set_vendor_hint(state.vendor_hint);
-      topic_states.emplace(r.name, std::move(state));
-      packet_topic_id.emplace(r.name, r.id);
-      topic_id_to_name.emplace(r.id, r.name);
-    }
-  }
-
-  if (packet_order.empty()) {
+  const auto topic_rows = query_sqlite3_topics(db_guard.db);
+  auto idx = build_packet_index_from_rows(topic_rows);
+  if (idx.packet_order.empty()) {
     return {};
   }
 
-  // Build the bind list for the aggregate query: every packet topic id.
-  // Empty topics cannot satisfy GROUP BY so they naturally drop out --
-  // that's exactly how we derive `has_messages` without a second scan.
-  std::vector<int> target_ids;
-  target_ids.reserve(packet_topic_id.size());
-  for (const auto & entry : packet_topic_id) {
-    target_ids.push_back(entry.second);
-  }
-
-  // One row per non-empty target topic: the first inserted message's
-  // bytes. MIN(id) is used (not MIN(timestamp)) so the aggregate can
-  // resolve directly off the integer primary key without an extra
-  // lookup. rosbag2 writes in timestamp order so the two coincide in
-  // practice, and for vendor sniffing any early packet is sufficient.
   std::unordered_set<std::string> topics_with_messages;
-  {
-    std::string q =
-      "SELECT data, topic_id FROM messages WHERE id IN ("
-      "SELECT MIN(id) FROM messages WHERE topic_id IN (";
-    for (std::size_t i = 0; i < target_ids.size(); ++i) {
-      q += (i == 0) ? "?" : ",?";
-    }
-    q += ") GROUP BY topic_id)";
+  sniff_first_messages_sqlite3(
+    db_guard.db, idx.target_ids, idx.topic_id_to_name, idx.topic_states, topics_with_messages);
 
-    SqliteStmtGuard sg;
-    if (sqlite3_prepare_v2(db_guard.db, q.c_str(), -1, &sg.stmt, nullptr) != SQLITE_OK) {
-      throw std::runtime_error(
-        std::string{"failed to prepare first-message query: "} + sqlite3_errmsg(db_guard.db));
-    }
-    for (std::size_t i = 0; i < target_ids.size(); ++i) {
-      sqlite3_bind_int(sg.stmt, static_cast<int>(i + 1), target_ids[i]);
-    }
-
-    while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
-      const void * blob = sqlite3_column_blob(sg.stmt, 0);
-      const int blob_size = sqlite3_column_bytes(sg.stmt, 0);
-      const int topic_id = sqlite3_column_int(sg.stmt, 1);
-      auto name_it = topic_id_to_name.find(topic_id);
-      if (name_it == topic_id_to_name.end()) {
-        continue;
-      }
-      topics_with_messages.insert(name_it->second);
-
-      // Wrap the raw CDR-serialized bytes in a rclcpp::SerializedMessage
-      // without copying them a second time downstream -- packet_source
-      // only reads from the buffer.
-      rclcpp::SerializedMessage serialized(static_cast<std::size_t>(blob_size));
-      auto & raw = serialized.get_rcl_serialized_message();
-      std::memcpy(raw.buffer, blob, static_cast<std::size_t>(blob_size));
-      raw.buffer_length = static_cast<std::size_t>(blob_size);
-
-      if (auto ts_it = topic_states.find(name_it->second); ts_it != topic_states.end()) {
-        if (!ts_it->second.packet_source) {
-          continue;
-        }
-        auto packets = ts_it->second.packet_source->extract(serialized);
-        for (const auto & pkt : packets) {
-          feed_packet(ts_it->second, pkt, nullptr);
-        }
-      }
-    }
-  }
-
-  // Refresh each sniffed_identity from the decoder so the summary
-  // reflects the latest known identity without feeding more packets.
-  for (auto & entry : topic_states) {
-    auto & state = entry.second;
-    if (auto decoder_id = state.decoder.identity(); decoder_id) {
-      state.sniffed_identity = decoder_id;
-    }
-  }
-
-  return build_summary(packet_order, topic_states, topics_with_messages);
+  refresh_sniffed_identities(idx.topic_states);
+  return build_summary(idx.packet_order, idx.topic_states, topics_with_messages);
 }
 
 }  // namespace
@@ -535,14 +581,7 @@ InspectSummary inspect(const std::string & input_path)
     }
   }
 
-  // Refresh each sniffed_identity from the decoder so the summary
-  // reflects the latest known identity without feeding more packets.
-  for (auto & entry : topic_states) {
-    auto & state = entry.second;
-    if (auto decoder_id = state.decoder.identity(); decoder_id) {
-      state.sniffed_identity = decoder_id;
-    }
-  }
+  refresh_sniffed_identities(topic_states);
 
   std::unordered_set<std::string> topics_with_messages;
   for (const auto & [name, count] : message_counts) {
@@ -665,236 +704,198 @@ std::vector<ConvertPlanEntry> plan_convert(
   return entries;
 }
 
-ConvertResult convert(const ConvertOptions & options)
+namespace
 {
-  const auto in_spec = detect_input(options.input_path);
 
-  // Phase 1: quick inspect to learn each packet topic's sniffed identity
-  // before we open the main reader. Decoding vs passthrough hinges on
-  // `SupportRegistry::check(identity)`: a topic that matches a mapping
-  // rule but whose vendor/model is not supported is demoted to
-  // passthrough instead of producing an empty PointCloud2 topic.
-  const auto summary = inspect(options.input_path);
-  std::unordered_map<std::string, std::optional<Identity>> identity_by_topic;
+/// Flatten `summary.topics` into a name -> identity map for the convert
+/// pipeline's support-filter step.
+std::unordered_map<std::string, std::optional<Identity>> build_identity_index(
+  const InspectSummary & summary)
+{
+  std::unordered_map<std::string, std::optional<Identity>> out;
+  out.reserve(summary.topics.size());
   for (const auto & t : summary.topics) {
-    identity_by_topic.emplace(t.topic, t.identity);
+    out.emplace(t.topic, t.identity);
   }
+  return out;
+}
 
-  rosbag2_cpp::Reader reader;
-  reader.open(to_storage_options(in_spec));
+struct SupportPartition
+{
+  std::vector<ResolvedRule> decoded;
+  std::vector<std::string> demoted;
+};
 
-  const auto discovered = discover_topics(reader);
-  auto partition = resolve_discovered_topics(discovered.packet_topics, options.mapping);
-
-  // Filter mapping-matched topics by the SupportRegistry. Topics the
-  // registry rejects are demoted to passthrough so their raw packets
-  // still land in the output bag (Continental radar, Robosense,
-  // unidentified streams, etc.).
+/// Split resolved rules by `SupportRegistry::check()`. Topics the
+/// registry rejects are demoted to passthrough so their raw packets
+/// still land in the output bag (Continental radar, Robosense,
+/// unidentified streams, ...).
+SupportPartition partition_by_support(
+  std::vector<ResolvedRule> resolved,
+  const std::unordered_map<std::string, std::optional<Identity>> & identity_by_topic)
+{
   const auto & registry = SupportRegistry::instance();
-  std::vector<ResolvedRule> decoded_rules;
-  decoded_rules.reserve(partition.resolved.size());
-  std::vector<std::string> demoted_topics;
-  for (auto & r : partition.resolved) {
+  SupportPartition out;
+  out.decoded.reserve(resolved.size());
+  for (auto & r : resolved) {
     std::optional<Identity> id;
     if (auto it = identity_by_topic.find(r.in_topic); it != identity_by_topic.end()) {
       id = it->second;
     }
     if (registry.check(id).level == SupportLevel::Supported) {
-      decoded_rules.push_back(std::move(r));
+      out.decoded.push_back(std::move(r));
     } else {
-      demoted_topics.push_back(r.in_topic);
+      out.demoted.push_back(r.in_topic);
     }
   }
+  return out;
+}
 
-  std::unordered_set<std::string> decoded_topic_names;
-  decoded_topic_names.reserve(decoded_rules.size());
+/// Snapshot every topic in the bag with its original metadata so the
+/// writer phase can recreate non-decoded topics verbatim.
+std::vector<rosbag2_storage::TopicMetadata> collect_topic_metadata(
+  const rosbag2_cpp::Reader & reader)
+{
+  const auto & topics = reader.get_metadata().topics_with_message_count;
+  std::vector<rosbag2_storage::TopicMetadata> out;
+  out.reserve(topics.size());
+  for (const auto & info : topics) {
+    out.push_back(info.topic_metadata);
+  }
+  return out;
+}
+
+/// rosbag2_cpp::Writer always materialises a directory (metadata.yaml +
+/// <base>_<chunk>.ext). For bare-file input we want a bare-file output,
+/// so the writer first creates a sibling scratch directory; the caller
+/// later renames its single storage file to `final_output_path`. For
+/// directory input we point the writer at `final_output_path` directly.
+fs::path compute_writer_uri(const fs::path & final_output_path, bool collapse_to_file)
+{
+  if (!collapse_to_file) {
+    return final_output_path;
+  }
+  const fs::path raw_parent = final_output_path.parent_path();
+  fs::path scratch =
+    (raw_parent.empty() ? fs::path{"."} : raw_parent) /
+    (std::string{"."} + final_output_path.filename().string() + ".nebuladec_writer_scratch");
+  // Defensive cleanup for leftovers from a prior failed run; Writer::
+  // open() fails if the uri already exists.
+  fs::remove_all(scratch);
+  return scratch;
+}
+
+/// Per-input-topic routing tables for the writer phase. Kept in one
+/// struct so convert() doesn't have to thread three parallel maps
+/// through helper signatures.
+struct DecodedRoutingTables
+{
+  std::unordered_map<std::string, std::string> out_topic_by_in;
+  std::unordered_map<std::string, std::string> frame_id_by_in;
+  std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
+};
+
+/// Create one PointCloud2 output topic per decoded rule and populate
+/// `states` with a fresh decoder. Throws when two rules resolve to the
+/// same out_topic -- rosbag2 allows duplicate create_topic only when
+/// name+type+serialization match exactly, and writer.write() dispatches
+/// on name alone, so silent merging would drop one of the frame_ids.
+DecodedRoutingTables register_decoded_topics(
+  rosbag2_cpp::Writer & writer, const std::vector<ResolvedRule> & decoded_rules,
+  TopicStateMap & states)
+{
+  DecodedRoutingTables out;
+  std::unordered_set<std::string> created_out_topics;
   for (const auto & r : decoded_rules) {
-    decoded_topic_names.insert(r.in_topic);
+    if (!created_out_topics.insert(r.match.out_topic).second) {
+      throw std::runtime_error(
+        "mapping resolves multiple in_topics to the same out_topic '" + r.match.out_topic + "'");
+    }
+    const auto vendor_hint = vendor_from_message_type(r.type);
+
+    TopicState state;
+    state.topic = r.in_topic;
+    state.type = r.type;
+    state.vendor_hint = vendor_hint;
+    state.packet_source = make_packet_source(r.type);
+    state.decoder.set_vendor_hint(vendor_hint);
+    states.emplace(r.in_topic, std::move(state));
+
+    out.out_topic_by_in.emplace(r.in_topic, r.match.out_topic);
+    out.frame_id_by_in.emplace(r.in_topic, r.match.frame_id);
+    out.last_stamp_by_in.emplace(r.in_topic, 0);
+
+    rosbag2_storage::TopicMetadata meta;
+    meta.name = r.match.out_topic;
+    meta.type = "sensor_msgs/msg/PointCloud2";
+    meta.serialization_format = "cdr";
+    writer.create_topic(meta);
   }
+  return out;
+}
 
-  // Snapshot every topic in the bag with its original metadata so we
-  // can recreate it verbatim on the output side (everything that is
-  // not a decoded packet topic gets copied through unchanged).
-  std::vector<rosbag2_storage::TopicMetadata> all_topic_metadata;
-  all_topic_metadata.reserve(reader.get_metadata().topics_with_message_count.size());
-  for (const auto & info : reader.get_metadata().topics_with_message_count) {
-    all_topic_metadata.push_back(info.topic_metadata);
+struct PassthroughTopics
+{
+  std::unordered_set<std::string> by_name;
+  std::vector<std::string> ordered;
+};
+
+/// Create passthrough topics for everything that isn't a decoded packet
+/// topic, preserving the original type and serialization_format. Returns
+/// the per-name lookup set (for the writer loop) plus the bag-order list
+/// (for `ConvertResult::passthrough_topics`).
+PassthroughTopics register_passthrough_topics(
+  rosbag2_cpp::Writer & writer,
+  const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata,
+  const std::unordered_set<std::string> & decoded_topic_names)
+{
+  PassthroughTopics out;
+  out.ordered.reserve(all_topic_metadata.size());
+  for (const auto & meta : all_topic_metadata) {
+    if (decoded_topic_names.count(meta.name)) {
+      continue;
+    }
+    writer.create_topic(meta);
+    out.by_name.insert(meta.name);
+    out.ordered.push_back(meta.name);
   }
+  return out;
+}
 
-  // Mirror the input's file-vs-directory layout on the output side.
-  // rosbag2_cpp::Writer always materialises a directory (metadata.yaml +
-  // <base>_<chunk>.ext), so to emit a bare file for bare-file input we
-  // let the writer create a sibling scratch directory, then rename the
-  // single storage file to the user's requested path once the writer has
-  // closed.
-  const fs::path final_output_path{options.output_path};
-  const bool collapse_to_file = !in_spec.is_directory;
-
-  if (fs::exists(final_output_path)) {
-    throw std::runtime_error(
-      "output path already exists: " + final_output_path.string() + " (refusing to overwrite)");
+/// Pull the single storage file out of the writer's scratch directory
+/// and rename it onto `final_output_path`. Throws if the writer split
+/// the bag into multiple files (bare-file output cannot represent a
+/// split bag).
+void collapse_scratch_to_bare_file(
+  const fs::path & writer_uri, const fs::path & final_output_path, const std::string & storage_id)
+{
+  const std::string ext = storage_ext_for_id(storage_id);
+  fs::path found;
+  for (const auto & entry : fs::directory_iterator(writer_uri)) {
+    if (!entry.is_regular_file() || entry.path().extension() != ext) {
+      continue;
+    }
+    if (!found.empty()) {
+      throw std::runtime_error(
+        "writer produced multiple " + ext +
+        " files; bare-file output mode does not support split bags");
+    }
+    found = entry.path();
   }
-
-  const fs::path writer_uri = [&]() -> fs::path {
-    if (!collapse_to_file) {
-      return final_output_path;
-    }
-    fs::path parent = final_output_path.parent_path();
-    if (parent.empty()) {
-      parent = ".";
-    }
-    fs::path scratch = parent / (std::string{"."} + final_output_path.filename().string() +
-                                 ".nebuladec_writer_scratch");
-    // Defensive cleanup for leftovers from a prior failed run; Writer::
-    // open() fails if the uri already exists.
-    fs::remove_all(scratch);
-    return scratch;
-  }();
-
-  // Only `states` needs to outlive the writer scope -- ConvertResult
-  // assembly below reads per-topic decoder stats from it. Every other
-  // bookkeeping map lives inside the writer scope so cppcheck's
-  // variableScope check stays happy.
-  TopicStateMap states;
-  std::vector<std::string> passthrough_topics;  // declared for result; filled below.
-
-  {
-    rosbag2_cpp::Writer writer;
-    rosbag2_storage::StorageOptions out_opts;
-    out_opts.uri = writer_uri.string();
-    out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
-    writer.open(out_opts);
-
-    std::unordered_map<std::string, std::string> out_topic_by_in;
-    std::unordered_map<std::string, std::string> frame_id_by_in;
-    std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
-    std::unordered_set<std::string> created_out_topics;
-
-    // 1) Create PointCloud2 output topics for every decoded rule.
-    for (const auto & r : decoded_rules) {
-      const auto vendor_hint = vendor_from_message_type(r.type);
-
-      // Guard against two rules resolving to the same output topic with
-      // different frame_ids -- rosbag2 allows two create_topic calls only
-      // when name+type+serialization match exactly, and the downstream
-      // writer.write() dispatches on name alone. Merging silently would
-      // drop one of the frame_ids, so we refuse instead.
-      if (!created_out_topics.insert(r.match.out_topic).second) {
-        throw std::runtime_error(
-          "mapping resolves multiple in_topics to the same out_topic '" + r.match.out_topic + "'");
-      }
-
-      TopicState state;
-      state.topic = r.in_topic;
-      state.type = r.type;
-      state.vendor_hint = vendor_hint;
-      state.packet_source = make_packet_source(r.type);
-      state.decoder.set_vendor_hint(vendor_hint);
-      states.emplace(r.in_topic, std::move(state));
-
-      out_topic_by_in.emplace(r.in_topic, r.match.out_topic);
-      frame_id_by_in.emplace(r.in_topic, r.match.frame_id);
-      last_stamp_by_in.emplace(r.in_topic, 0);
-
-      rosbag2_storage::TopicMetadata meta;
-      meta.name = r.match.out_topic;
-      meta.type = "sensor_msgs/msg/PointCloud2";
-      meta.serialization_format = "cdr";
-      writer.create_topic(meta);
-    }
-
-    // 2) Create passthrough topics for everything else, preserving the
-    // original type and serialization_format.
-    std::unordered_set<std::string> passthrough_topic_set;
-    for (const auto & meta : all_topic_metadata) {
-      if (decoded_topic_names.count(meta.name)) {
-        continue;
-      }
-      writer.create_topic(meta);
-      passthrough_topic_set.insert(meta.name);
-      passthrough_topics.push_back(meta.name);
-    }
-
-    auto sink = [&](
-                  const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
-                  std::int64_t stamp_ns) {
-      if (!cloud || cloud->empty()) {
-        return;
-      }
-      const auto & out_topic = out_topic_by_in.at(in_topic);
-      const auto & frame_id = frame_id_by_in.at(in_topic);
-      const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), frame_id);
-      writer.write(pc_msg, out_topic, rclcpp::Time(stamp_ns));
-    };
-
-    while (reader.has_next()) {
-      auto bag_msg = reader.read_next();
-
-      // 3a) Decoded packet topic: decode and emit PointCloud2; the raw
-      // packet is NOT passed through -- the PointCloud2 output replaces
-      // it by design.
-      if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
-        if (!it->second.packet_source) {
-          continue;
-        }
-        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
-        auto packets = it->second.packet_source->extract(serialized);
-        const std::string & in_topic = it->first;
-        for (const auto & pkt : packets) {
-          last_stamp_by_in[in_topic] = pkt.stamp_ns;
-          feed_packet(
-            it->second, pkt,
-            [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
-              sink(in_topic, cloud, stamp_ns);
-            });
-        }
-        continue;
-      }
-
-      // 3b) Passthrough: write the serialized message verbatim under
-      // its original topic name. Covers unmatched packet topics, demoted
-      // packet topics (Robosense / Continental radar / unidentified),
-      // and any unrelated streams (TF, IMU, camera, ...).
-      if (passthrough_topic_set.count(bag_msg->topic_name)) {
-        writer.write(bag_msg);
-      }
-    }
-
-    // Flush trailing scans held by mechanical-LiDAR decoders (see
-    // single-topic convert() history for rationale).
-    for (auto & [in_topic, state] : states) {
-      if (auto trailing = state.decoder.flush(); trailing && *trailing) {
-        ++state.clouds_produced;
-        sink(in_topic, *trailing, last_stamp_by_in[in_topic]);
-      }
-    }
-  }  // writer scope ends here -- destructor flushes and closes files.
-
-  // If the input was a bare single file, collapse the scratch directory
-  // down to a single storage file at the user-requested path.
-  if (collapse_to_file) {
-    const std::string ext = storage_ext_for_id(in_spec.storage_id);
-    fs::path found;
-    for (const auto & entry : fs::directory_iterator(writer_uri)) {
-      if (entry.is_regular_file() && entry.path().extension() == ext) {
-        if (!found.empty()) {
-          // Writer should only emit one storage file per bag when no
-          // split is configured; failing loudly here is safer than
-          // silently dropping chunks.
-          throw std::runtime_error(
-            "writer produced multiple " + ext +
-            " files; bare-file output mode does not support split bags");
-        }
-        found = entry.path();
-      }
-    }
-    if (found.empty()) {
-      throw std::runtime_error("writer produced no " + ext + " file at " + writer_uri.string());
-    }
-    fs::rename(found, final_output_path);
-    fs::remove_all(writer_uri);
+  if (found.empty()) {
+    throw std::runtime_error("writer produced no " + ext + " file at " + writer_uri.string());
   }
+  fs::rename(found, final_output_path);
+  fs::remove_all(writer_uri);
+}
 
+/// Assemble the public `ConvertResult` from the decoded rules and the
+/// final TopicStateMap after the writer has flushed. Run after the
+/// writer scope so decoder stats are final.
+ConvertResult build_convert_result(
+  const std::vector<ResolvedRule> & decoded_rules, const TopicStateMap & states,
+  std::vector<std::string> passthrough_topics)
+{
   ConvertResult result;
   result.topics.reserve(decoded_rules.size());
   for (const auto & r : decoded_rules) {
@@ -910,6 +911,127 @@ ConvertResult convert(const ConvertOptions & options)
   }
   result.passthrough_topics = std::move(passthrough_topics);
   return result;
+}
+
+}  // namespace
+
+ConvertResult convert(const ConvertOptions & options)
+{
+  const auto in_spec = detect_input(options.input_path);
+
+  // Phase 1: quick inspect so we know each packet topic's sniffed
+  // identity before opening the main reader. Decoding vs passthrough
+  // hinges on `SupportRegistry::check(identity)`: a topic that matches
+  // a mapping rule but whose vendor/model is not supported is demoted
+  // to passthrough instead of producing an empty PointCloud2 topic.
+  const auto identity_by_topic = build_identity_index(inspect(options.input_path));
+
+  rosbag2_cpp::Reader reader;
+  reader.open(to_storage_options(in_spec));
+
+  // Phase 2: discover packet topics, resolve them against the mapping,
+  // then split by SupportRegistry into decoded vs demoted.
+  const auto discovered = discover_topics(reader);
+  auto partition = resolve_discovered_topics(discovered.packet_topics, options.mapping);
+  auto support = partition_by_support(std::move(partition.resolved), identity_by_topic);
+
+  std::unordered_set<std::string> decoded_topic_names;
+  decoded_topic_names.reserve(support.decoded.size());
+  for (const auto & r : support.decoded) {
+    decoded_topic_names.insert(r.in_topic);
+  }
+  const auto all_topic_metadata = collect_topic_metadata(reader);
+
+  // Mirror the input's file-vs-directory layout on the output side.
+  const fs::path final_output_path{options.output_path};
+  const bool collapse_to_file = !in_spec.is_directory;
+  if (fs::exists(final_output_path)) {
+    throw std::runtime_error(
+      "output path already exists: " + final_output_path.string() + " (refusing to overwrite)");
+  }
+  const auto writer_uri = compute_writer_uri(final_output_path, collapse_to_file);
+
+  // Only `states` and `passthrough` need to outlive the writer scope:
+  // build_convert_result reads per-topic decoder stats from `states`
+  // and forwards `passthrough.ordered` into the result.
+  TopicStateMap states;
+  PassthroughTopics passthrough;
+
+  // Phase 3: open the writer, register output topics, run the
+  // reader-loop, then flush trailing scans before the writer closes.
+  {
+    rosbag2_cpp::Writer writer;
+    rosbag2_storage::StorageOptions out_opts;
+    out_opts.uri = writer_uri.string();
+    out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
+    writer.open(out_opts);
+
+    auto routing = register_decoded_topics(writer, support.decoded, states);
+    passthrough = register_passthrough_topics(writer, all_topic_metadata, decoded_topic_names);
+
+    auto sink = [&](
+                  const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
+                  std::int64_t stamp_ns) {
+      if (!cloud || cloud->empty()) {
+        return;
+      }
+      const auto & out_topic = routing.out_topic_by_in.at(in_topic);
+      const auto & frame_id = routing.frame_id_by_in.at(in_topic);
+      const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), frame_id);
+      writer.write(pc_msg, out_topic, rclcpp::Time(stamp_ns));
+    };
+
+    while (reader.has_next()) {
+      auto bag_msg = reader.read_next();
+
+      // Decoded packet topic: decode and emit PointCloud2; the raw
+      // packet is NOT passed through -- the PointCloud2 output replaces
+      // it by design.
+      if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
+        if (!it->second.packet_source) {
+          continue;
+        }
+        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+        auto packets = it->second.packet_source->extract(serialized);
+        const std::string & in_topic = it->first;
+        for (const auto & pkt : packets) {
+          routing.last_stamp_by_in[in_topic] = pkt.stamp_ns;
+          feed_packet(
+            it->second, pkt,
+            [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t stamp_ns) {
+              sink(in_topic, cloud, stamp_ns);
+            });
+        }
+        continue;
+      }
+
+      // Passthrough: write the serialized message verbatim under its
+      // original topic name. Covers unmatched packet topics, demoted
+      // packet topics (Robosense / Continental radar / unidentified),
+      // and any unrelated streams (TF, IMU, camera, ...).
+      if (passthrough.by_name.count(bag_msg->topic_name)) {
+        writer.write(bag_msg);
+      }
+    }
+
+    // Flush trailing scans held by mechanical-LiDAR decoders (see
+    // single-topic convert() history for rationale).
+    for (auto & [in_topic, state] : states) {
+      auto trailing = state.decoder.flush();
+      if (!trailing || !*trailing) {
+        continue;
+      }
+      ++state.clouds_produced;
+      sink(in_topic, *trailing, routing.last_stamp_by_in[in_topic]);
+    }
+  }  // writer scope ends here -- destructor flushes and closes files.
+
+  // Phase 4: collapse scratch -> bare file for bare-file inputs, then
+  // assemble and return the result.
+  if (collapse_to_file) {
+    collapse_scratch_to_bare_file(writer_uri, final_output_path, in_spec.storage_id);
+  }
+  return build_convert_result(support.decoded, states, std::move(passthrough.ordered));
 }
 
 }  // namespace nebuladec::bag

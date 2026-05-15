@@ -34,6 +34,8 @@ namespace nebuladec
 namespace
 {
 
+using Token = detail::TemplateToken;
+
 bool is_identifier_start(char c)
 {
   return std::isalpha(static_cast<unsigned char>(c)) != 0 || c == '_';
@@ -51,12 +53,6 @@ bool is_identifier_body(char c)
 ///   * unterminated placeholder (missing `>`)
 ///   * empty placeholder name
 ///   * invalid placeholder name (not [A-Za-z_][A-Za-z0-9_]*)
-struct Token
-{
-  bool is_placeholder;
-  std::string value;
-};
-
 std::vector<Token> tokenize_template(const std::string & text, const std::string & field_name)
 {
   std::vector<Token> tokens;
@@ -321,6 +317,11 @@ TopicMapping TopicMapping::from_yaml_string(const std::string & yaml)
     ensure_placeholders_known(out_tokens, known_names, "out_topic");
     ensure_placeholders_known(frame_tokens, known_names, "frame_id");
 
+    // Cache the tokenized output / frame_id templates so resolve() does
+    // not re-parse them per packet on the convert() hot path.
+    cr.out_tokens = std::move(out_tokens);
+    cr.frame_tokens = std::move(frame_tokens);
+
     compiled.push_back(std::move(cr));
   }
 
@@ -352,13 +353,10 @@ std::optional<MappingMatch> TopicMapping::resolve(const std::string & in_topic) 
       captures.emplace(cr.placeholder_names[p], sm[p + cr.placeholder_group_offset].str());
     }
 
-    const auto out_tokens = tokenize_template(cr.rule.out_template, "out_topic");
-    const auto frame_tokens = tokenize_template(cr.rule.frame_id_template, "frame_id");
-
     MappingMatch m;
     m.rule_index = i;
-    m.out_topic = expand_template(out_tokens, captures);
-    m.frame_id = expand_template(frame_tokens, captures);
+    m.out_topic = expand_template(cr.out_tokens, captures);
+    m.frame_id = expand_template(cr.frame_tokens, captures);
 
     // For relative rules, the absolute prefix of the incoming topic
     // lives in group 1. Splice it back onto the rewritten suffix so,

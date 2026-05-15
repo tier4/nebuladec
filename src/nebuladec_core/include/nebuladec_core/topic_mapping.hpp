@@ -24,6 +24,22 @@
 namespace nebuladec
 {
 
+namespace detail
+{
+
+/// Single token from a parsed template string. Either a literal chunk
+/// (`is_placeholder == false`) or a placeholder name to be substituted
+/// at `resolve()` time. Lives in `detail` because it is only used to
+/// share the token type between `topic_mapping.cpp` and the private
+/// `CompiledRule` cache below; user code must not depend on it.
+struct TemplateToken
+{
+  bool is_placeholder{false};
+  std::string value;
+};
+
+}  // namespace detail
+
 /// @brief One entry in the user-supplied YAML mapping table.
 ///
 /// `in_pattern`, `out_template`, and `frame_id_template` may reference
@@ -92,6 +108,11 @@ private:
     /// absolute rules; equals 2 for relative rules (group 1 is reserved
     /// for the absolute prefix captured from the matched topic).
     std::size_t placeholder_group_offset{1};
+    /// Pre-tokenized `out_template` / `frame_id_template`. Tokenization
+    /// only depends on the rule text, so parsing once at compile time
+    /// avoids re-running it for every packet in `resolve()`.
+    std::vector<detail::TemplateToken> out_tokens;
+    std::vector<detail::TemplateToken> frame_tokens;
   };
 
   explicit TopicMapping(std::vector<CompiledRule> compiled);
