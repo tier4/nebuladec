@@ -26,6 +26,7 @@
     "submatches",
     "suppr",
     "tabulate",
-    "unboundaried"
+    "unboundaried",
+    "unloadable"
   ]
 }
