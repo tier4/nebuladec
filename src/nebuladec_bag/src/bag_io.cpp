@@ -915,6 +915,40 @@ ConvertResult build_convert_result(
   return result;
 }
 
+/// rosbag2 renamed `SerializedBagMessage::time_stamp` to `recv_timestamp`
+/// between Humble and Iron, so we cannot reference either name directly
+/// without breaking one of the two distros nebuladec supports. A small
+/// inheritance-priority tag picks `time_stamp` first (Humble) and falls
+/// back to `recv_timestamp` (Iron/Jazzy) via SFINAE on the member access
+/// expression. Both fields carry a nanosecond-resolution log timestamp,
+/// so the call site is encoding-agnostic.
+template <int N>
+struct LogTimePriority : LogTimePriority<N - 1>
+{
+};
+template <>
+struct LogTimePriority<0>
+{
+};
+
+template <typename Msg>
+auto bag_message_log_time_ns(const Msg & msg, LogTimePriority<1>) -> decltype(msg.time_stamp)
+{
+  return msg.time_stamp;
+}
+
+template <typename Msg>
+auto bag_message_log_time_ns(const Msg & msg, LogTimePriority<0>) -> decltype(msg.recv_timestamp)
+{
+  return msg.recv_timestamp;
+}
+
+template <typename Msg>
+auto bag_message_log_time_ns(const Msg & msg)
+{
+  return bag_message_log_time_ns(msg, LogTimePriority<1>{});
+}
+
 /// Bare-file MCAP convert path that bypasses `rosbag2_cpp::Writer` so
 /// schema records can be sourced from the input bag's embedded
 /// definitions. Entered only when the input bag is MCAP, output mirrors
@@ -1005,7 +1039,7 @@ ConvertResult convert_via_definition_writer(
 
     while (reader.has_next()) {
       auto bag_msg = reader.read_next();
-      const auto stamp_ns = bag_msg->time_stamp;
+      const auto stamp_ns = bag_message_log_time_ns(*bag_msg);
 
       if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
         if (!it->second.packet_source) {
