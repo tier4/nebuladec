@@ -14,6 +14,8 @@
 
 #include "nebuladec_bag/bag_io.hpp"
 
+#include "mcap_definition_writer.hpp"
+#include "nebuladec_bag/message_definition.hpp"
 #include "nebuladec_bag/point_cloud2.hpp"
 #include "packet_source.hpp"
 
@@ -913,6 +915,174 @@ ConvertResult build_convert_result(
   return result;
 }
 
+/// rosbag2 renamed `SerializedBagMessage::time_stamp` to `recv_timestamp`
+/// between Humble and Iron, so we cannot reference either name directly
+/// without breaking one of the two distros nebuladec supports. A small
+/// inheritance-priority tag picks `time_stamp` first (Humble) and falls
+/// back to `recv_timestamp` (Iron/Jazzy) via SFINAE on the member access
+/// expression. Both fields carry a nanosecond-resolution log timestamp,
+/// so the call site is encoding-agnostic.
+template <int N>
+struct LogTimePriority : LogTimePriority<N - 1>
+{
+};
+template <>
+struct LogTimePriority<0>
+{
+};
+
+template <typename Msg>
+auto bag_message_log_time_ns(const Msg & msg, LogTimePriority<1>) -> decltype(msg.time_stamp)
+{
+  return msg.time_stamp;
+}
+
+template <typename Msg>
+auto bag_message_log_time_ns(const Msg & msg, LogTimePriority<0>) -> decltype(msg.recv_timestamp)
+{
+  return msg.recv_timestamp;
+}
+
+template <typename Msg>
+auto bag_message_log_time_ns(const Msg & msg)
+{
+  return bag_message_log_time_ns(msg, LogTimePriority<1>{});
+}
+
+/// Bare-file MCAP convert path that bypasses `rosbag2_cpp::Writer` so
+/// schema records can be sourced from the input bag's embedded
+/// definitions. Entered only when the input bag is MCAP, output mirrors
+/// it as a single file, and `registry` carries at least one definition
+/// -- i.e. the input bag has something the local environment may lack.
+///
+/// Reuses the already-opened `reader` and the `decoded`/`all_topic_*`
+/// snapshots from the public `convert()` so this helper does no
+/// rediscovery. The PointCloud2 produced by each decoded rule is
+/// serialized with `rclcpp::Serialization` and handed to the
+/// McapDefinitionWriter alongside passthrough bytes copied verbatim.
+ConvertResult convert_via_definition_writer(
+  rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
+  const std::unordered_set<std::string> & decoded_topic_names,
+  const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata,
+  const fs::path & final_output_path, const MessageDefinitionRegistry & registry)
+{
+  if (fs::exists(final_output_path)) {
+    throw std::runtime_error(
+      "output path already exists: " + final_output_path.string() + " (refusing to overwrite)");
+  }
+
+  TopicStateMap states;
+  std::unordered_map<std::string, std::string> out_topic_by_in;
+  std::unordered_map<std::string, std::string> frame_id_by_in;
+  std::unordered_map<std::string, std::int64_t> last_stamp_by_in;
+  PassthroughTopics passthrough;
+
+  {
+    McapDefinitionWriter writer{final_output_path, registry};
+
+    // Register decoded topics (PointCloud2 outputs) plus their state.
+    // Mirrors `register_decoded_topics` but routes through the
+    // definition writer; we keep the duplicate-output-topic guard so
+    // the same ambiguity check fires regardless of writer kind.
+    std::unordered_set<std::string> created_out_topics;
+    for (const auto & r : decoded_rules) {
+      if (!created_out_topics.insert(r.match.out_topic).second) {
+        throw std::runtime_error(
+          "mapping resolves multiple in_topics to the same out_topic '" + r.match.out_topic + "'");
+      }
+      const auto vendor_hint = vendor_from_message_type(r.type);
+      TopicState state;
+      state.topic = r.in_topic;
+      state.type = r.type;
+      state.vendor_hint = vendor_hint;
+      state.packet_source = make_packet_source(r.type);
+      state.decoder.set_vendor_hint(vendor_hint);
+      states.emplace(r.in_topic, std::move(state));
+      out_topic_by_in.emplace(r.in_topic, r.match.out_topic);
+      frame_id_by_in.emplace(r.in_topic, r.match.frame_id);
+      last_stamp_by_in.emplace(r.in_topic, 0);
+      writer.create_topic(r.match.out_topic, "sensor_msgs/msg/PointCloud2", "cdr");
+    }
+
+    // Register passthrough topics in bag-metadata order.
+    passthrough.ordered.reserve(all_topic_metadata.size());
+    for (const auto & meta : all_topic_metadata) {
+      if (decoded_topic_names.count(meta.name)) {
+        continue;
+      }
+      writer.create_topic(meta.name, meta.type, meta.serialization_format);
+      passthrough.by_name.insert(meta.name);
+      passthrough.ordered.push_back(meta.name);
+    }
+
+    rclcpp::Serialization<sensor_msgs::msg::PointCloud2> pc2_serializer;
+
+    auto sink = [&](
+                  const std::string & in_topic, nebula::drivers::NebulaPointCloudPtr cloud,
+                  std::int64_t stamp_ns) {
+      if (!cloud || cloud->empty()) {
+        return;
+      }
+      const auto & out_topic = out_topic_by_in.at(in_topic);
+      const auto & frame_id = frame_id_by_in.at(in_topic);
+      const auto pc_msg = to_point_cloud2(*cloud, rclcpp::Time(stamp_ns), frame_id);
+      // Manual CDR serialization: the definition writer takes raw
+      // bytes, so we cannot rely on rosbag2_cpp::Writer's typed
+      // overload.
+      rclcpp::SerializedMessage serialized;
+      pc2_serializer.serialize_message(&pc_msg, &serialized);
+      const auto & raw = serialized.get_rcl_serialized_message();
+      writer.write_serialized(
+        out_topic, reinterpret_cast<const std::byte *>(raw.buffer),  // NOLINT
+        raw.buffer_length, stamp_ns, stamp_ns);
+    };
+
+    while (reader.has_next()) {
+      auto bag_msg = reader.read_next();
+      const auto stamp_ns = bag_message_log_time_ns(*bag_msg);
+
+      if (auto it = states.find(bag_msg->topic_name); it != states.end()) {
+        if (!it->second.packet_source) {
+          continue;
+        }
+        rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
+        auto packets = it->second.packet_source->extract(serialized);
+        const std::string & in_topic = it->first;
+        for (const auto & pkt : packets) {
+          last_stamp_by_in[in_topic] = pkt.stamp_ns;
+          feed_packet(
+            it->second, pkt,
+            [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t cloud_stamp) {
+              sink(in_topic, cloud, cloud_stamp);
+            });
+        }
+        continue;
+      }
+
+      if (passthrough.by_name.count(bag_msg->topic_name)) {
+        // Pass the raw CDR bytes through untouched. SerializedBagMessage
+        // owns a shared rcl buffer (rcl_serialized_message_t) backed by
+        // a contiguous heap allocation -- we treat it as opaque bytes.
+        const auto & raw = bag_msg->serialized_data;
+        writer.write_serialized(
+          bag_msg->topic_name, reinterpret_cast<const std::byte *>(raw->buffer),  // NOLINT
+          raw->buffer_length, stamp_ns, stamp_ns);
+      }
+    }
+
+    for (auto & [in_topic, state] : states) {
+      auto trailing = state.decoder.flush();
+      if (!trailing || !*trailing) {
+        continue;
+      }
+      ++state.clouds_produced;
+      sink(in_topic, *trailing, last_stamp_by_in[in_topic]);
+    }
+  }  // writer destructor finalises the mcap file
+
+  return build_convert_result(decoded_rules, states, std::move(passthrough.ordered));
+}
+
 }  // namespace
 
 ConvertResult convert(const ConvertOptions & options)
@@ -945,6 +1115,31 @@ ConvertResult convert(const ConvertOptions & options)
   // Mirror the input's file-vs-directory layout on the output side.
   const fs::path final_output_path{options.output_path};
   const bool collapse_to_file = !in_spec.is_directory;
+
+  // Schema-forwarding fast path: when the input bag carries embedded
+  // message definitions and we are writing a bare-file MCAP, take the
+  // definition-writer branch so unknown-but-embedded types make it into
+  // the output. The branch is intentionally narrow:
+  //
+  //   * input must be MCAP -- only MCAP guarantees Schema records on
+  //     the read side.
+  //   * output must be bare-file -- the directory layout (multiple
+  //     chunked mcaps + metadata.yaml) is out of scope for this fix.
+  //   * registry must be non-empty -- otherwise the existing
+  //     `rosbag2_cpp::Writer` path is byte-equivalent and we avoid
+  //     touching well-tested code.
+  //
+  // When any condition fails we fall through to the legacy writer
+  // exactly as before, so existing tests stay on the same code path.
+  if (in_spec.storage_id == "mcap" && collapse_to_file) {
+    auto registry = load_definition_registry(in_spec);
+    if (!registry.empty()) {
+      return convert_via_definition_writer(
+        reader, support.decoded, decoded_topic_names, all_topic_metadata, final_output_path,
+        registry);
+    }
+  }
+
   if (fs::exists(final_output_path)) {
     throw std::runtime_error(
       "output path already exists: " + final_output_path.string() + " (refusing to overwrite)");

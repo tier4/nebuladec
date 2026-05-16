@@ -14,11 +14,22 @@ endif()
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 find_package(SQLite3 REQUIRED)
+# mcap_vendor exports the header-only libmcap C++ library. We use it
+# directly on the write side because rosbag2_storage_mcap's only way to
+# obtain a Schema record is to look the type up in the local ament
+# index -- when the type is not installed, the schema is written empty.
+# Forwarding embedded schemas requires bypassing that path entirely.
+find_package(mcap_vendor REQUIRED)
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
+  src/ament_message_loader.cpp
   src/bag_io.cpp
+  src/mcap_definition_source.cpp
+  src/mcap_definition_writer.cpp
+  src/message_definition.cpp
   src/packet_source.cpp
   src/point_cloud2.cpp
+  src/sqlite_definition_source.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -26,7 +37,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 # inspect() on a bare .db3 file bypasses rosbag2_cpp::Reader to skip its
 # 17GB/941k-row metadata reconstruction and talks to libsqlite3 directly.
-target_link_libraries(${PROJECT_NAME} SQLite::SQLite3)
+target_link_libraries(${PROJECT_NAME} SQLite::SQLite3 mcap_vendor::mcap)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -41,6 +52,21 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_point_cloud2 test/test_point_cloud2.cpp)
   target_link_libraries(test_point_cloud2 ${PROJECT_NAME})
+
+  # Covers MessageDefinitionSource for both mcap (Schema records) and
+  # sqlite3 (metadata.yaml's Iron+ `message_definition` block, plus the
+  # Humble soft-fail-to-empty case). The test builds its MCAP fixtures
+  # in-process via mcap::McapWriter so no ground-truth bag is needed.
+  ament_add_gtest(test_message_definition_source test/test_message_definition_source.cpp)
+  target_link_libraries(test_message_definition_source ${PROJECT_NAME} mcap_vendor::mcap)
+
+  # End-to-end regression for the embedded-definition forwarding fix:
+  # synthesizes an MCAP with one topic whose ROS 2 type package is not
+  # installed in the build environment, runs `bag::convert()`, and
+  # verifies the output's Schema record carries the same .msg text.
+  # Mirrors the user's reported `oxts_msgs/msg/Ncom` scenario.
+  ament_add_gtest(test_convert_embedded_definition test/test_convert_embedded_definition.cpp)
+  target_link_libraries(test_convert_embedded_definition ${PROJECT_NAME} mcap_vendor::mcap)
 
   # Regression test for the Hesai QT128 cloud-ownership bug. Uses the
   # QT128 ground-truth bag shipped by upstream nebula_hesai.

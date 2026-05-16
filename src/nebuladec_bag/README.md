@@ -22,6 +22,23 @@ Four free functions in the namespace `nebuladec::bag`:
 Supporting value types: `InputSpec`, `TopicInspectResult`, `InspectSummary`,
 `ConvertOptions`, `TopicConvertResult`, `ConvertResult`, `ConvertPlanEntry`.
 
+### `message_definition.hpp` — embedded schema forwarding
+
+Defines `MessageDefinition` (POD: `type_name`, `encoding`, `text`),
+`MessageDefinitionSource` (abstract source of definitions per storage
+plugin), `MessageDefinitionRegistry` (type-name keyed view), the factory
+`make_definition_source(spec)`, and the convenience
+`load_definition_registry(spec)`.
+
+The motivation is the `oxts_msgs/msg/Ncom`-style failure mode: when a
+rosbag2 MCAP file is converted on a host that does not have the input
+bag's message-type packages installed, `rosbag2_storage_mcap` writes an
+empty Schema record to the output and emits `definition file(s) missing
+for ...` at ERROR level. With the registry populated from the input
+bag's embedded Schema records, `bag::convert()` switches to a
+definition-aware writer that forwards the Schema byte-for-byte. See
+_End-to-end flow_ below.
+
 ### `point_cloud2.hpp`
 
 Just one function: `to_point_cloud2(cloud, stamp, frame_id)`. Converts a
@@ -54,6 +71,7 @@ intensity, return_type, channel, azimuth, elevation, distance, time_stamp).
 3. **Plan** — `plan_convert()` runs `TopicMapping::resolve()` per topic and classifies it as `ok`, `skipped`, or `error`.
 4. **Decode** — `convert()` reads each packet message in the main loop, feeds bytes to `Decoder::feed()`, and converts returned clouds via `to_point_cloud2()`. Unmatched / unsupported topics are written through unchanged. After the loop, `Decoder::flush()` drains the trailing scan.
 5. **Write the output** — Output mirrors the input's storage plugin and layout. For bare-file inputs the writer creates a scratch directory and renames the final storage file into place.
+   - **Schema-forwarding fast path (MCAP → MCAP, bare file).** When the input bag carries embedded `Schema` records and the output is a bare-file MCAP, `convert()` skips `rosbag2_cpp::Writer` and writes directly via `mcap::McapWriter` (`McapDefinitionWriter`). Schema records are sourced in priority order: (a) input bag registry, (b) local ament index via the recursive `.msg` loader in `ament_message_loader.cpp`, (c) soft fail (empty Schema + warning, matching `rosbag2_storage_mcap`'s default). The other three cases (sqlite3 output, MCAP directory output, MCAP→MCAP where the registry is empty) keep the original `rosbag2_cpp::Writer` flow byte-for-byte.
 
 ## Topic naming
 
@@ -80,18 +98,20 @@ The recognized ROS message types are:
 - **`test_point_cloud2.cpp`** — `to_point_cloud2()` with empty clouds, two-point round trips (memcpy back and check values), and matching field names / offsets / counts against `NebulaPoint::fields()`.
 - **`test_convert_hesai_qt128.cpp`** — Regression test for the Hesai cloud-ownership bug. `HesaiDecoder` clears its frame buffer after the scan callback, so the adapter must own a copy. Uses a Nebula-provided golden bag under `../dependencies/nebula/.../qt128/.../*.db3`, baked in via `NEBULADEC_BAG_TEST_QT128_BAG`. Built conditionally.
 - **`test_convert_velodyne_vlp16.cpp`** — Regression test for the Velodyne trailing-scan loss. `VelodyneDriver` only surfaces the previous scan on azimuth wrap, so without `flush()` the last scan is dropped. Uses a VLP16 golden bag baked in via `NEBULADEC_BAG_TEST_VLP16_BAG`. Built conditionally.
+- **`test_message_definition_source.cpp`** — Unit tests for the MCAP and SQLite3 sources of embedded definitions. Synthesizes MCAP and `metadata.yaml` fixtures in-process; covers byte-for-byte round trip, empty-bag behaviour, missing-file error, and the Iron-style `message_definition` block parser.
+- **`test_convert_embedded_definition.cpp`** — End-to-end regression for the schema-forwarding fast path. Builds a one-topic MCAP whose type package is not installed in the build environment, runs `bag::convert()`, and asserts the output bag's Schema record carries the same `.msg` text.
 
 ## Dependencies
 
 `package.xml`:
 
-- `depend`: `libsqlite3-dev`, `nebula_msgs`, `nebuladec_adapters`, `pandar_msgs`, `rclcpp`, `robosense_msgs`, `rosbag2_cpp`, `rosbag2_storage`, `sensor_msgs`, `velodyne_msgs`
+- `depend`: `libsqlite3-dev`, `mcap_vendor`, `nebula_msgs`, `nebuladec_adapters`, `pandar_msgs`, `rclcpp`, `robosense_msgs`, `rosbag2_cpp`, `rosbag2_storage`, `sensor_msgs`, `velodyne_msgs`, `yaml-cpp`
 - `exec_depend`: `rosbag2_storage_mcap` (runtime plugin for MCAP storage)
 - `test_depend`: `ament_cmake_gtest`, `ament_lint_auto`, `ament_lint_common`
 - `buildtool_depend`: `ament_cmake_auto`
 
 ## Build artifacts
 
-- Shared library `nebuladec_bag` (three source files). Linked explicitly against `SQLite::SQLite3`.
+- Shared library `nebuladec_bag`. Linked explicitly against `SQLite::SQLite3` and `mcap_vendor::mcap`.
 - Test binaries: `test_detect_input` and `test_point_cloud2` are always built. `test_convert_hesai_qt128` and `test_convert_velodyne_vlp16` register only when the corresponding golden bag is present.
 - `ament_cmake_uncrustify` is suppressed — formatting is enforced by clang-format via pre-commit.

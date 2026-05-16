@@ -14,6 +14,7 @@
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
   <depend>libsqlite3-dev</depend>
+  <depend>mcap_vendor</depend>
   <depend>nebula_msgs</depend>
   <depend>nebuladec_adapters</depend>
   <depend>pandar_msgs</depend>
@@ -23,12 +24,19 @@
   <depend>rosbag2_storage</depend>
   <depend>sensor_msgs</depend>
   <depend>velodyne_msgs</depend>
+  <depend>yaml-cpp</depend>
 
+  <!-- rosbag2_storage_mcap is a pluginlib runtime dependency for MCAP I/O.
+       Declared as test_depend (in addition to runtime) because CI's
+       "Remove exec_depend" step strips exec_depend declarations before
+       the test stage, which would leave the mcap storage plugin
+       unloadable for tests that read or write .mcap files. -->
   <exec_depend>rosbag2_storage_mcap</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>rosbag2_storage_mcap</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
