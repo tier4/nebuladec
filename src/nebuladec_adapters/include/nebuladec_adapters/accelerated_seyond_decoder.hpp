@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef NEBULADEC_ADAPTERS__FAST_SEYOND_DECODER_HPP_
-#define NEBULADEC_ADAPTERS__FAST_SEYOND_DECODER_HPP_
+#ifndef NEBULADEC_ADAPTERS__ACCELERATED_SEYOND_DECODER_HPP_
+#define NEBULADEC_ADAPTERS__ACCELERATED_SEYOND_DECODER_HPP_
 
 // Drop-in optimized re-implementation of `nebula::drivers::SeyondDecoder`
 // for the FALCON_K and ROBIN_W (non-compact) hot paths.
@@ -33,7 +33,7 @@
 //     path can hoist or elide (full-circle FOV, double->float casts,
 //     un-reserved PointCloud allocations, separate sin/cos calls, ...).
 //
-// FastSeyondDecoder is intentionally limited in scope. `supports()` returns
+// AcceleratedSeyondDecoder is intentionally limited in scope. `supports()` returns
 // true only for the two sensor models exercised in the workflow this
 // decoder was written for. SeyondAdapter falls back to the upstream
 // nebula::drivers::SeyondDecoder for every other model and for the
@@ -52,13 +52,13 @@
 namespace nebuladec::adapters
 {
 
-class FastSeyondDecoder
+class AcceleratedSeyondDecoder
 {
 public:
   using pointcloud_callback_t =
     std::function<void(nebula::drivers::NebulaPointCloudPtr, std::uint64_t)>;
 
-  FastSeyondDecoder(
+  AcceleratedSeyondDecoder(
     const nebula::drivers::SeyondSensorConfiguration & config, pointcloud_callback_t pointcloud_cb,
     const nebula::drivers::SeyondCalibrationData & calibration =
       nebula::drivers::SeyondCalibrationData{});
@@ -111,4 +111,4 @@ private:
 
 }  // namespace nebuladec::adapters
 
-#endif  // NEBULADEC_ADAPTERS__FAST_SEYOND_DECODER_HPP_
+#endif  // NEBULADEC_ADAPTERS__ACCELERATED_SEYOND_DECODER_HPP_

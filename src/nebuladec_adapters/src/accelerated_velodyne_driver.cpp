@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "nebuladec_adapters/fast_velodyne_driver.hpp"
+#include "nebuladec_adapters/accelerated_velodyne_driver.hpp"
 
-#include "nebuladec_adapters/fast_velodyne_decoder.hpp"
+#include "nebuladec_adapters/accelerated_velodyne_decoder.hpp"
 
 #include <memory>
 #include <tuple>
@@ -23,7 +23,7 @@
 namespace nebuladec::adapters
 {
 
-bool FastVelodyneDriver::supports(nebula::drivers::SensorModel model) noexcept
+bool AcceleratedVelodyneDriver::supports(nebula::drivers::SensorModel model) noexcept
 {
   switch (model) {
     case nebula::drivers::SensorModel::VELODYNE_VLS128:
@@ -37,26 +37,26 @@ bool FastVelodyneDriver::supports(nebula::drivers::SensorModel model) noexcept
   }
 }
 
-FastVelodyneDriver::FastVelodyneDriver(
+AcceleratedVelodyneDriver::AcceleratedVelodyneDriver(
   const std::shared_ptr<const nebula::drivers::VelodyneSensorConfiguration> & sensor_configuration,
   const std::shared_ptr<const nebula::drivers::VelodyneCalibrationConfiguration> &
     calibration_configuration)
 {
   switch (sensor_configuration->sensor_model) {
     case nebula::drivers::SensorModel::VELODYNE_VLS128:
-      scan_decoder_ = std::make_shared<fast_vls128::FastVls128Decoder>(
+      scan_decoder_ = std::make_shared<accelerated_vls128::AcceleratedVls128Decoder>(
         sensor_configuration, calibration_configuration);
       driver_status_ = nebula::Status::OK;
       break;
     case nebula::drivers::SensorModel::VELODYNE_VLP32:
     case nebula::drivers::SensorModel::VELODYNE_HDL64:
     case nebula::drivers::SensorModel::VELODYNE_HDL32:
-      scan_decoder_ = std::make_shared<fast_vlp32::FastVlp32Decoder>(
+      scan_decoder_ = std::make_shared<accelerated_vlp32::AcceleratedVlp32Decoder>(
         sensor_configuration, calibration_configuration);
       driver_status_ = nebula::Status::OK;
       break;
     case nebula::drivers::SensorModel::VELODYNE_VLP16:
-      scan_decoder_ = std::make_shared<fast_vlp16::FastVlp16Decoder>(
+      scan_decoder_ = std::make_shared<accelerated_vlp16::AcceleratedVlp16Decoder>(
         sensor_configuration, calibration_configuration);
       driver_status_ = nebula::Status::OK;
       break;
@@ -66,7 +66,8 @@ FastVelodyneDriver::FastVelodyneDriver(
   }
 }
 
-std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVelodyneDriver::parse_cloud_packet(
+std::tuple<nebula::drivers::NebulaPointCloudPtr, double>
+AcceleratedVelodyneDriver::parse_cloud_packet(
   const std::vector<std::uint8_t> & packet, double packet_seconds)
 {
   std::tuple<nebula::drivers::NebulaPointCloudPtr, double> pointcloud;

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef NEBULADEC_ADAPTERS__FAST_HESAI_DRIVER_HPP_
-#define NEBULADEC_ADAPTERS__FAST_HESAI_DRIVER_HPP_
+#ifndef NEBULADEC_ADAPTERS__ACCELERATED_HESAI_DRIVER_HPP_
+#define NEBULADEC_ADAPTERS__ACCELERATED_HESAI_DRIVER_HPP_
 
 // Drop-in alternative to `nebula::drivers::HesaiDriver` for the sensor
-// models nebuladec supports a fast path for. Same construction-time
+// models nebuladec supports a accelerated path for. Same construction-time
 // contract (sensor configuration, calibration, logger, pointcloud
 // callback) and same `parse_cloud_packet` API; internally instantiates
-// `FastHesaiDecoder<SensorT>` instead of upstream's `HesaiDecoder<SensorT>`.
+// `AcceleratedHesaiDecoder<SensorT>` instead of upstream's `HesaiDecoder<SensorT>`.
 //
 // Why a parallel driver: `nebula::drivers::HesaiDriver` keeps its
 // `scan_decoder_` member private and instantiates it in the constructor
@@ -41,14 +41,14 @@
 namespace nebuladec::adapters
 {
 
-class FastHesaiDriver
+class AcceleratedHesaiDriver
 {
 public:
-  /// @return true iff `FastHesaiDriver` covers this model. Caller should
+  /// @return true iff `AcceleratedHesaiDriver` covers this model. Caller should
   /// fall back to `nebula::drivers::HesaiDriver` when this returns false.
   static bool supports(nebula::drivers::SensorModel model) noexcept;
 
-  FastHesaiDriver(
+  AcceleratedHesaiDriver(
     const std::shared_ptr<const nebula::drivers::HesaiSensorConfiguration> & sensor_configuration,
     const std::shared_ptr<const nebula::drivers::HesaiCalibrationConfigurationBase> & calibration,
     const std::shared_ptr<nebula::drivers::loggers::Logger> & logger,
@@ -56,7 +56,7 @@ public:
 
   [[nodiscard]] nebula::Status get_status() const noexcept { return driver_status_; }
 
-  /// @brief Decode a packet through the fast path.
+  /// @brief Decode a packet through the accelerated path.
   void parse_cloud_packet(const std::vector<std::uint8_t> & packet);
 
 private:
@@ -67,4 +67,4 @@ private:
 
 }  // namespace nebuladec::adapters
 
-#endif  // NEBULADEC_ADAPTERS__FAST_HESAI_DRIVER_HPP_
+#endif  // NEBULADEC_ADAPTERS__ACCELERATED_HESAI_DRIVER_HPP_

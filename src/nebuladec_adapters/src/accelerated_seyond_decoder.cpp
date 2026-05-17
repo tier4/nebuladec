@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "nebuladec_adapters/fast_seyond_decoder.hpp"
+#include "nebuladec_adapters/accelerated_seyond_decoder.hpp"
 
 #include <nebula_core_common/point_types.hpp>
 #include <nebula_core_decoders/angles.hpp>
@@ -201,7 +201,7 @@ inline RobinAdjustment interpolate_robin_w_adjustment_f(int h_angle, std::uint32
 
 }  // namespace
 
-bool FastSeyondDecoder::supports(nebula::drivers::SeyondSensorModel model) noexcept
+bool AcceleratedSeyondDecoder::supports(nebula::drivers::SeyondSensorModel model) noexcept
 {
   // FalconK: sphere payload (type=1). RobinW: compact payload (type=13)
   // when no calibration table is provided -- which is the SeyondAdapter
@@ -210,7 +210,7 @@ bool FastSeyondDecoder::supports(nebula::drivers::SeyondSensorModel model) noexc
          model == nebula::drivers::SeyondSensorModel::ROBIN_W;
 }
 
-FastSeyondDecoder::FastSeyondDecoder(
+AcceleratedSeyondDecoder::AcceleratedSeyondDecoder(
   const nebula::drivers::SeyondSensorConfiguration & config, pointcloud_callback_t pointcloud_cb,
   const nebula::drivers::SeyondCalibrationData & calibration)
 : config_(config), calibration_(calibration), pointcloud_callback_(std::move(pointcloud_cb))
@@ -232,7 +232,7 @@ FastSeyondDecoder::FastSeyondDecoder(
   ensure_scan_cloud();
 }
 
-void FastSeyondDecoder::ensure_scan_cloud()
+void AcceleratedSeyondDecoder::ensure_scan_cloud()
 {
   if (!current_scan_cloud_) {
     current_scan_cloud_ = std::make_shared<nebula::drivers::NebulaPointCloud>();
@@ -242,7 +242,7 @@ void FastSeyondDecoder::ensure_scan_cloud()
   }
 }
 
-void FastSeyondDecoder::emit_point(
+void AcceleratedSeyondDecoder::emit_point(
   float x, float y, float z, std::uint8_t intensity, std::uint16_t channel,
   std::uint32_t timestamp_ns)
 {
@@ -293,7 +293,7 @@ void FastSeyondDecoder::emit_point(
   current_scan_cloud_->emplace_back(point);
 }
 
-void FastSeyondDecoder::parse_falcon_k(const void * packet_bytes)
+void AcceleratedSeyondDecoder::parse_falcon_k(const void * packet_bytes)
 {
   const auto * packet = static_cast<const nebula::drivers::SeyondFalconDataPacket *>(packet_bytes);
   const auto * payload = reinterpret_cast<const std::uint8_t *>(packet) +
@@ -380,7 +380,7 @@ void FastSeyondDecoder::parse_falcon_k(const void * packet_bytes)
   }
 }
 
-void FastSeyondDecoder::parse_robin_w_en(const void * packet_bytes)
+void AcceleratedSeyondDecoder::parse_robin_w_en(const void * packet_bytes)
 {
   // Handles the RobinW *compact* payload (type=13) -- the only RobinW
   // layout SeyondAdapter ever sees in offline decoding, because that
@@ -487,7 +487,7 @@ void FastSeyondDecoder::parse_robin_w_en(const void * packet_bytes)
   }
 }
 
-nebula::drivers::SeyondPacketDecodeResult FastSeyondDecoder::unpack(
+nebula::drivers::SeyondPacketDecodeResult AcceleratedSeyondDecoder::unpack(
   const std::vector<std::uint8_t> & packet_data)
 {
   if (packet_data.size() < sizeof(nebula::drivers::SeyondPacketCommon)) {

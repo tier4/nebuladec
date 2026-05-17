@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef NEBULADEC_ADAPTERS__FAST_VELODYNE_DRIVER_HPP_
-#define NEBULADEC_ADAPTERS__FAST_VELODYNE_DRIVER_HPP_
+#ifndef NEBULADEC_ADAPTERS__ACCELERATED_VELODYNE_DRIVER_HPP_
+#define NEBULADEC_ADAPTERS__ACCELERATED_VELODYNE_DRIVER_HPP_
 
 // Drop-in alternative to `nebula::drivers::VelodyneDriver` for the
-// sensor models nebuladec ships a fast path for. Same construction
+// sensor models nebuladec ships a accelerated path for. Same construction
 // contract (sensor configuration, calibration) and same
-// `parse_cloud_packet` API; internally instantiates the FastVlp* decoder
+// `parse_cloud_packet` API; internally instantiates the AcceleratedVlp* decoder
 // matching the configured model.
 
 #include <nebula_core_common/nebula_common.hpp>
@@ -35,12 +35,12 @@
 namespace nebuladec::adapters
 {
 
-class FastVelodyneDriver
+class AcceleratedVelodyneDriver
 {
 public:
   static bool supports(nebula::drivers::SensorModel model) noexcept;
 
-  FastVelodyneDriver(
+  AcceleratedVelodyneDriver(
     const std::shared_ptr<const nebula::drivers::VelodyneSensorConfiguration> &
       sensor_configuration,
     const std::shared_ptr<const nebula::drivers::VelodyneCalibrationConfiguration> &
@@ -62,4 +62,4 @@ private:
 
 }  // namespace nebuladec::adapters
 
-#endif  // NEBULADEC_ADAPTERS__FAST_VELODYNE_DRIVER_HPP_
+#endif  // NEBULADEC_ADAPTERS__ACCELERATED_VELODYNE_DRIVER_HPP_

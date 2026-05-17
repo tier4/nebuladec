@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "nebuladec_adapters/fast_velodyne_decoder.hpp"
+#include "nebuladec_adapters/accelerated_velodyne_decoder.hpp"
 
 #include <angles/angles.h>
 
@@ -92,13 +92,13 @@ inline FovBoundsHundredths fov_bounds(const VelodyneSensorConfiguration & cfg) n
 }  // namespace
 
 // ============================================================================
-// FastVlp16Decoder
+// AcceleratedVlp16Decoder
 // ============================================================================
 
-namespace fast_vlp16
+namespace accelerated_vlp16
 {
 
-FastVlp16Decoder::FastVlp16Decoder(
+AcceleratedVlp16Decoder::AcceleratedVlp16Decoder(
   const std::shared_ptr<const VelodyneSensorConfiguration> & sensor_configuration,
   const std::shared_ptr<const VelodyneCalibrationConfiguration> & calibration_configuration)
 {
@@ -137,7 +137,7 @@ FastVlp16Decoder::FastVlp16Decoder(
   phase_ = static_cast<int>(std::round(sensor_configuration_->scan_phase * 100));
 }
 
-std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVlp16Decoder::get_pointcloud()
+std::tuple<nebula::drivers::NebulaPointCloudPtr, double> AcceleratedVlp16Decoder::get_pointcloud()
 {
   double phase = angles::from_degrees(sensor_configuration_->scan_phase);
   if (!scan_pc_->empty()) {
@@ -155,18 +155,18 @@ std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVlp16Decoder::get_p
   return std::make_tuple(scan_pc_, scan_timestamp_);
 }
 
-int FastVlp16Decoder::points_per_packet()
+int AcceleratedVlp16Decoder::points_per_packet()
 {
   return g_blocks_per_packet * g_vlp16_firings_per_block * g_vlp16_scans_per_firing;
 }
 
-void FastVlp16Decoder::reset_pointcloud(double time_stamp)
+void AcceleratedVlp16Decoder::reset_pointcloud(double time_stamp)
 {
   scan_pc_->clear();
   reset_overflow(time_stamp);
 }
 
-void FastVlp16Decoder::reset_overflow(double time_stamp)
+void AcceleratedVlp16Decoder::reset_overflow(double time_stamp)
 {
   if (overflow_pc_->size() == 0) {
     scan_timestamp_ = -1;
@@ -194,7 +194,8 @@ void FastVlp16Decoder::reset_overflow(double time_stamp)
   overflow_pc_->reserve(max_pts_);
 }
 
-void FastVlp16Decoder::unpack(const std::vector<std::uint8_t> & packet, double packet_seconds)
+void AcceleratedVlp16Decoder::unpack(
+  const std::vector<std::uint8_t> & packet, double packet_seconds)
 {
   check_and_handle_scan_complete(packet, packet_seconds, phase_);
 
@@ -349,21 +350,22 @@ void FastVlp16Decoder::unpack(const std::vector<std::uint8_t> & packet, double p
   }
 }
 
-bool FastVlp16Decoder::parse_packet(const velodyne_msgs::msg::VelodynePacket & /*velodyne_packet*/)
+bool AcceleratedVlp16Decoder::parse_packet(
+  const velodyne_msgs::msg::VelodynePacket & /*velodyne_packet*/)
 {
   return false;
 }
 
-}  // namespace fast_vlp16
+}  // namespace accelerated_vlp16
 
 // ============================================================================
-// FastVlp32Decoder
+// AcceleratedVlp32Decoder
 // ============================================================================
 
-namespace fast_vlp32
+namespace accelerated_vlp32
 {
 
-FastVlp32Decoder::FastVlp32Decoder(
+AcceleratedVlp32Decoder::AcceleratedVlp32Decoder(
   const std::shared_ptr<const VelodyneSensorConfiguration> & sensor_configuration,
   const std::shared_ptr<const VelodyneCalibrationConfiguration> & calibration_configuration)
 {
@@ -403,7 +405,7 @@ FastVlp32Decoder::FastVlp32Decoder(
   }
 }
 
-std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVlp32Decoder::get_pointcloud()
+std::tuple<nebula::drivers::NebulaPointCloudPtr, double> AcceleratedVlp32Decoder::get_pointcloud()
 {
   double phase = angles::from_degrees(sensor_configuration_->scan_phase);
   if (!scan_pc_->empty()) {
@@ -419,18 +421,18 @@ std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVlp32Decoder::get_p
   return std::make_tuple(scan_pc_, scan_timestamp_);
 }
 
-int FastVlp32Decoder::points_per_packet()
+int AcceleratedVlp32Decoder::points_per_packet()
 {
   return g_blocks_per_packet * g_scans_per_block;
 }
 
-void FastVlp32Decoder::reset_pointcloud(double time_stamp)
+void AcceleratedVlp32Decoder::reset_pointcloud(double time_stamp)
 {
   scan_pc_->clear();
   reset_overflow(time_stamp);
 }
 
-void FastVlp32Decoder::reset_overflow(double time_stamp)
+void AcceleratedVlp32Decoder::reset_overflow(double time_stamp)
 {
   if (overflow_pc_->size() == 0) {
     scan_timestamp_ = -1;
@@ -458,7 +460,8 @@ void FastVlp32Decoder::reset_overflow(double time_stamp)
   overflow_pc_->reserve(max_pts_);
 }
 
-void FastVlp32Decoder::unpack(const std::vector<std::uint8_t> & packet, double packet_seconds)
+void AcceleratedVlp32Decoder::unpack(
+  const std::vector<std::uint8_t> & packet, double packet_seconds)
 {
   check_and_handle_scan_complete(packet, packet_seconds, phase_);
 
@@ -659,21 +662,22 @@ void FastVlp32Decoder::unpack(const std::vector<std::uint8_t> & packet, double p
   }
 }
 
-bool FastVlp32Decoder::parse_packet(const velodyne_msgs::msg::VelodynePacket & /*velodyne_packet*/)
+bool AcceleratedVlp32Decoder::parse_packet(
+  const velodyne_msgs::msg::VelodynePacket & /*velodyne_packet*/)
 {
   return false;
 }
 
-}  // namespace fast_vlp32
+}  // namespace accelerated_vlp32
 
 // ============================================================================
-// FastVls128Decoder
+// AcceleratedVls128Decoder
 // ============================================================================
 
-namespace fast_vls128
+namespace accelerated_vls128
 {
 
-FastVls128Decoder::FastVls128Decoder(
+AcceleratedVls128Decoder::AcceleratedVls128Decoder(
   const std::shared_ptr<const VelodyneSensorConfiguration> & sensor_configuration,
   const std::shared_ptr<const VelodyneCalibrationConfiguration> & calibration_configuration)
 {
@@ -710,7 +714,7 @@ FastVls128Decoder::FastVls128Decoder(
   }
 }
 
-std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVls128Decoder::get_pointcloud()
+std::tuple<nebula::drivers::NebulaPointCloudPtr, double> AcceleratedVls128Decoder::get_pointcloud()
 {
   double phase = angles::from_degrees(sensor_configuration_->scan_phase);
   if (!scan_pc_->empty()) {
@@ -728,18 +732,18 @@ std::tuple<nebula::drivers::NebulaPointCloudPtr, double> FastVls128Decoder::get_
   return std::make_tuple(scan_pc_, scan_timestamp_);
 }
 
-int FastVls128Decoder::points_per_packet()
+int AcceleratedVls128Decoder::points_per_packet()
 {
   return g_blocks_per_packet * g_scans_per_block;
 }
 
-void FastVls128Decoder::reset_pointcloud(double time_stamp)
+void AcceleratedVls128Decoder::reset_pointcloud(double time_stamp)
 {
   scan_pc_->clear();
   reset_overflow(time_stamp);
 }
 
-void FastVls128Decoder::reset_overflow(double time_stamp)
+void AcceleratedVls128Decoder::reset_overflow(double time_stamp)
 {
   if (overflow_pc_->size() == 0) {
     scan_timestamp_ = -1;
@@ -767,7 +771,8 @@ void FastVls128Decoder::reset_overflow(double time_stamp)
   overflow_pc_->reserve(max_pts_);
 }
 
-void FastVls128Decoder::unpack(const std::vector<std::uint8_t> & packet, double packet_seconds)
+void AcceleratedVls128Decoder::unpack(
+  const std::vector<std::uint8_t> & packet, double packet_seconds)
 {
   check_and_handle_scan_complete(packet, packet_seconds, phase_);
 
@@ -935,11 +940,12 @@ void FastVls128Decoder::unpack(const std::vector<std::uint8_t> & packet, double 
   }
 }
 
-bool FastVls128Decoder::parse_packet(const velodyne_msgs::msg::VelodynePacket & /*velodyne_packet*/)
+bool AcceleratedVls128Decoder::parse_packet(
+  const velodyne_msgs::msg::VelodynePacket & /*velodyne_packet*/)
 {
   return false;
 }
 
-}  // namespace fast_vls128
+}  // namespace accelerated_vls128
 
 }  // namespace nebuladec::adapters

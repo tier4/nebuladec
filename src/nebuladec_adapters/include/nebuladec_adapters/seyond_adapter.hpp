@@ -32,7 +32,7 @@ class SeyondDecoder;
 namespace nebuladec::adapters
 {
 
-class FastSeyondDecoder;
+class AcceleratedSeyondDecoder;
 
 /// @brief Adapter that wraps Nebula's SeyondDecoder.
 ///
@@ -60,12 +60,12 @@ public:
 
 private:
   Identity identity_;
-  // Exactly one of these is non-null at any time. `fast_decoder_` is
-  // preferred when `FastSeyondDecoder::supports(model)` returns true and
-  // the `NEBULADEC_FAST_SEYOND` environment variable is not set to "0";
+  // Exactly one of these is non-null at any time. `accelerated_decoder_` is
+  // preferred when `AcceleratedSeyondDecoder::supports(model)` returns true and
+  // the `NEBULADEC_ACCELERATED_SEYOND` environment variable is not set to "0";
   // otherwise the adapter falls back to the upstream nebula decoder.
   std::unique_ptr<nebula::drivers::SeyondDecoder> decoder_;
-  std::unique_ptr<FastSeyondDecoder> fast_decoder_;
+  std::unique_ptr<AcceleratedSeyondDecoder> accelerated_decoder_;
   std::deque<nebula::drivers::NebulaPointCloudPtr> ready_clouds_;
   /// Packets from the first scan of the stream, captured until the
   /// decoder fires its first callback. Replayed by flush() so the

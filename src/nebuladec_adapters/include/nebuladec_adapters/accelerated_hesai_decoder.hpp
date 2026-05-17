@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef NEBULADEC_ADAPTERS__FAST_HESAI_DECODER_HPP_
-#define NEBULADEC_ADAPTERS__FAST_HESAI_DECODER_HPP_
+#ifndef NEBULADEC_ADAPTERS__ACCELERATED_HESAI_DECODER_HPP_
+#define NEBULADEC_ADAPTERS__ACCELERATED_HESAI_DECODER_HPP_
 
 // Parallel re-implementation of `nebula::drivers::HesaiDecoder<SensorT>`
 // that conforms to upstream's `nebula::drivers::HesaiScanDecoder` virtual
@@ -33,10 +33,10 @@
 //     detection entirely. Single-return is the dominant mode in offline
 //     decoding (and the only mode the test bag uses).
 //
-// `FastHesaiDecoder<SensorT>` is templated on SensorT, matching upstream
+// `AcceleratedHesaiDecoder<SensorT>` is templated on SensorT, matching upstream
 // so the per-sensor packet layout (`SensorT::packet_t`) and angle
 // corrector (`SensorT::angle_corrector_t`) are picked up by the type
-// system. Instantiate via the model dispatcher in `fast_hesai_driver.hpp`.
+// system. Instantiate via the model dispatcher in `accelerated_hesai_driver.hpp`.
 
 #include "nebula_core_decoders/scan_cutter.hpp"
 #include "nebula_hesai_decoders/decoders/angle_corrector.hpp"
@@ -61,13 +61,13 @@ namespace nebuladec::adapters
 {
 
 template <typename SensorT>
-class FastHesaiDecoder : public nebula::drivers::HesaiScanDecoder
+class AcceleratedHesaiDecoder : public nebula::drivers::HesaiScanDecoder
 {
 public:
   using packet_t = typename SensorT::packet_t;
   using calib_t = typename SensorT::angle_corrector_t::correction_data_t;
 
-  FastHesaiDecoder(
+  AcceleratedHesaiDecoder(
     std::shared_ptr<const nebula::drivers::HesaiSensorConfiguration> sensor_configuration,
     std::shared_ptr<const calib_t> correction_data,
     std::shared_ptr<nebula::drivers::loggers::Logger> logger)
@@ -329,4 +329,4 @@ private:
 
 }  // namespace nebuladec::adapters
 
-#endif  // NEBULADEC_ADAPTERS__FAST_HESAI_DECODER_HPP_
+#endif  // NEBULADEC_ADAPTERS__ACCELERATED_HESAI_DECODER_HPP_

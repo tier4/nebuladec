@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef NEBULADEC_ADAPTERS__FAST_VELODYNE_DECODER_HPP_
-#define NEBULADEC_ADAPTERS__FAST_VELODYNE_DECODER_HPP_
+#ifndef NEBULADEC_ADAPTERS__ACCELERATED_VELODYNE_DECODER_HPP_
+#define NEBULADEC_ADAPTERS__ACCELERATED_VELODYNE_DECODER_HPP_
 
 // Verbatim ports of upstream Velodyne decoders (VLP16, VLP32, VLS128)
 // implemented as parallel classes that inherit upstream's
@@ -43,15 +43,15 @@
 namespace nebuladec::adapters
 {
 
-namespace fast_vlp16
+namespace accelerated_vlp16
 {
 
 constexpr std::uint32_t k_max_points = 300000;
 
-class FastVlp16Decoder : public nebula::drivers::VelodyneScanDecoder
+class AcceleratedVlp16Decoder : public nebula::drivers::VelodyneScanDecoder
 {
 public:
-  FastVlp16Decoder(
+  AcceleratedVlp16Decoder(
     const std::shared_ptr<const nebula::drivers::VelodyneSensorConfiguration> &
       sensor_configuration,
     const std::shared_ptr<const nebula::drivers::VelodyneCalibrationConfiguration> &
@@ -73,17 +73,17 @@ private:
   std::vector<std::vector<float>> timing_offsets_;
 };
 
-}  // namespace fast_vlp16
+}  // namespace accelerated_vlp16
 
-namespace fast_vlp32
+namespace accelerated_vlp32
 {
 
 constexpr std::uint32_t k_max_points = 300000;
 
-class FastVlp32Decoder : public nebula::drivers::VelodyneScanDecoder
+class AcceleratedVlp32Decoder : public nebula::drivers::VelodyneScanDecoder
 {
 public:
-  FastVlp32Decoder(
+  AcceleratedVlp32Decoder(
     const std::shared_ptr<const nebula::drivers::VelodyneSensorConfiguration> &
       sensor_configuration,
     const std::shared_ptr<const nebula::drivers::VelodyneCalibrationConfiguration> &
@@ -105,17 +105,17 @@ private:
   std::vector<std::vector<float>> timing_offsets_;
 };
 
-}  // namespace fast_vlp32
+}  // namespace accelerated_vlp32
 
-namespace fast_vls128
+namespace accelerated_vls128
 {
 
 constexpr std::uint32_t k_max_points = 300000;
 
-class FastVls128Decoder : public nebula::drivers::VelodyneScanDecoder
+class AcceleratedVls128Decoder : public nebula::drivers::VelodyneScanDecoder
 {
 public:
-  FastVls128Decoder(
+  AcceleratedVls128Decoder(
     const std::shared_ptr<const nebula::drivers::VelodyneSensorConfiguration> &
       sensor_configuration,
     const std::shared_ptr<const nebula::drivers::VelodyneCalibrationConfiguration> &
@@ -138,8 +138,8 @@ private:
   std::vector<std::vector<float>> timing_offsets_;
 };
 
-}  // namespace fast_vls128
+}  // namespace accelerated_vls128
 
 }  // namespace nebuladec::adapters
 
-#endif  // NEBULADEC_ADAPTERS__FAST_VELODYNE_DECODER_HPP_
+#endif  // NEBULADEC_ADAPTERS__ACCELERATED_VELODYNE_DECODER_HPP_
