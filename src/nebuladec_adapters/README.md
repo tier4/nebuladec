@@ -40,6 +40,18 @@ All three adapters inherit from `nebuladec_core::AnyDecoder` and implement
 - `set_min_points` / its getter let the caller drop scans with too few
   points so noise scans never reach downstream consumers.
 
+### Thread-safety contract
+
+A single `Decoder` instance is **not** thread-safe — `feed()` mutates
+the cached adapter and identity state on every call. **Distinct
+instances, however, are independent and may be driven concurrently from
+different threads.** Orchestrators that decode several lidar topics in
+parallel (e.g. `nebuladec_bag` with a per-topic worker pool) should
+create one `Decoder` per stream and dispatch packets accordingly. The
+shared singletons `PacketSniffer` and `SupportRegistry::instance()` are
+themselves safe to share across threads. See
+`test/test_decoder_concurrency.cpp` for the stress-tested guarantees.
+
 ## Implementation (`src/`)
 
 - `decoder.cpp` — The `Decoder` class (`feed/flush/identity/set_vendor_hint/set_min_points`) and the `make_adapter` factory.
@@ -51,6 +63,7 @@ All three adapters inherit from `nebuladec_core::AnyDecoder` and implement
 - `test_hesai_adapter.cpp` — `is_ready()` for Pandar40P and PandarXT32, rejection of UNKNOWN model, empty-packet safety, and a `make_adapter` round-trip.
 - `test_velodyne_adapter.cpp` — `is_ready()` for VLP16 and VLS128, rejection of UNKNOWN model, and empty-packet safety.
 - `test_decoder_integration.cpp` — End-to-end Sniffer → `make_adapter` → `AnyDecoder::feed`. Realistic byte sequences for Hesai Pandar40P, Velodyne VLP16, Seyond, and Robosense (Helios, BpearlV3). Confirms Robosense and garbage produce no point clouds.
+- `test_decoder_concurrency.cpp` — Stress tests for the per-instance thread-safety contract: a shared `PacketSniffer` and `SupportRegistry::instance()` driven from 4 threads, 4 independent per-thread Seyond `Decoder`s, and 4 mixed-vendor (Seyond / Hesai / Velodyne) `Decoder`s constructed and fed concurrently. Catches races in calibration loading and in the package-share-dir lookup that `make_adapter` performs.
 
 ## Dependencies
 
@@ -66,8 +79,13 @@ All three adapters inherit from `nebuladec_core::AnyDecoder` and implement
 ## Build artifacts
 
 - Shared library `nebuladec_adapters` (four source files). Public includes exported via `include/`.
-- Test executables: `test_decoder`, `test_hesai_adapter`, `test_velodyne_adapter`, `test_decoder_integration`.
+- Test executables: `test_decoder`, `test_hesai_adapter`, `test_velodyne_adapter`, `test_decoder_integration`, `test_decoder_concurrency`.
 - `ament_cmake_uncrustify` is suppressed — formatting is enforced by clang-format via pre-commit.
+- CMake option `NEBULADEC_PROFILE` (default `OFF`) mirrors the same
+  option on `nebuladec_core`. When `ON`, the adapter's `feed` paths and
+  the wrapped upstream `parse_cloud_packet` / `unpack` calls are wrapped
+  in `NEBULADEC_PROFILE_SCOPE` markers; see `nebuladec_core/README.md`
+  for the full description.
 
 ## Consuming the adapters
 

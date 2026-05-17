@@ -73,6 +73,13 @@ struct MappingMatch
 /// then matches a single packet topic against every rule. The first
 /// matching rule wins unless two or more rules match -- that is a user
 /// error (ambiguous config) and surfaces as `std::runtime_error`.
+///
+/// Thread-safety: a compiled instance is immutable after construction
+/// and `resolve()` only reads the compiled rules + the input topic
+/// string; it does not mutate any member. A single instance is safe
+/// to share across threads, which lets orchestrators look up the
+/// mapping for several packet topics concurrently from worker threads
+/// without serialising on a mutex.
 class TopicMapping
 {
 public:

@@ -29,6 +29,11 @@ namespace nebuladec
 /// @brief Vendor-agnostic adapter that wraps a Nebula driver.
 ///
 /// Concrete implementations live in the `nebuladec_adapters` package.
+///
+/// Thread-safety: per-instance not thread-safe (the wrapped driver
+/// carries scan-accumulation state across calls). Distinct instances
+/// are independent and safe to drive concurrently from different
+/// threads -- mirroring the per-instance Decoder contract.
 class AnyDecoder
 {
 public:

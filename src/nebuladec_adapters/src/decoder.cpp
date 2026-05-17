@@ -21,6 +21,7 @@
 #include <nebuladec_core/any_decoder.hpp>
 #include <nebuladec_core/identity.hpp>
 #include <nebuladec_core/packet_sniffer.hpp>
+#include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -88,7 +89,9 @@ Decoder & Decoder::operator=(Decoder &&) noexcept = default;
 std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::feed(
   const std::vector<std::uint8_t> & packet, double stamp_sec)
 {
+  NEBULADEC_PROFILE_SCOPE("decoder_feed_total");
   if (!impl_->adapter && !impl_->identity_locked) {
+    NEBULADEC_PROFILE_SCOPE("decoder_feed_sniff");
     auto sniffed = impl_->sniffer.identify(packet, impl_->vendor_hint);
     if (!sniffed.has_value()) {
       return std::nullopt;

@@ -21,6 +21,7 @@ find_package(yaml-cpp REQUIRED)
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/packet_sniffer.cpp
+  src/profiling.cpp
   src/support_registry.cpp
   src/topic_mapping.cpp
 )
@@ -29,6 +30,15 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(${PROJECT_NAME} yaml-cpp)
+
+# Opt-in micro-profiler. Off by default; enable with `colcon build
+# --cmake-args -D NEBULADEC_PROFILE=ON`. Propagated as a public compile
+# definition so adapter / cli code that includes profiling.hpp sees the
+# instrumented macro expansion.
+option(NEBULADEC_PROFILE "Enable opt-in nebuladec micro-profiler" OFF)
+if(NEBULADEC_PROFILE)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC NEBULADEC_PROFILE=1)
+endif()
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

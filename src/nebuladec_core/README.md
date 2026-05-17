@@ -28,12 +28,18 @@ any Nebula decoders — point-cloud reconstruction belongs to
 - `packet_sniffer.cpp` — Per-vendor sniff routines (Hesai SOP, Velodyne block magic + fixed size, the Robosense 4/8-byte magic, Seyond magic + data-item-type, the Continental ARS548/SRR520 header + size pairs).
 - `support_registry.cpp` — Hardcoded registry entries for HESAI (9 models), VELODYNE (4 models), and SEYOND (4 models). ROBOSENSE and CONTINENTAL are identified by the sniffer but intentionally absent — there is no PointCloud2 adapter for them.
 - `topic_mapping.cpp` — YAML parsing, template tokenization, regex compilation for `<name>` placeholders (with backreferences for repeated placeholder names and prefix preservation for relative rules), and ambiguous-rule detection.
+- `profiling.cpp` — Implementation of the opt-in micro-profiler declared in `profiling.hpp`. Compiled in but inert unless `NEBULADEC_PROFILE=1` is defined; see _Profiling_ below.
 
 ## Tests (`test/`)
 
 - `test_packet_sniffer.cpp` — Identification of every supported model (Hesai / Velodyne / Robosense / Seyond / Continental), rejection of empty / corrupt / undersized / size-mismatched packets, Seyond status-packet filtering, and `vendor_hint` restriction.
 - `test_support_registry.cpp` — Asserts that only HESAI / VELODYNE / SEYOND are supported, every `SupportLevel` return is correct, and `supported_vendors()` has the expected size.
 - `test_topic_mapping.cpp` — Parsing of absolute and relative rules, error paths (missing fields, invalid placeholders, mixing absolute and relative rules), resolution logic, ambiguity raising, and `nullopt` on no-match.
+
+Cross-package concurrent-use stress tests live in
+`nebuladec_adapters/test/test_decoder_concurrency.cpp`; they exercise
+the thread-safety contracts documented on `PacketSniffer`,
+`SupportRegistry`, and `TopicMapping` here.
 
 ## Dependencies
 
@@ -45,9 +51,36 @@ any Nebula decoders — point-cloud reconstruction belongs to
 
 ## Build artifacts
 
-- Shared library `nebuladec_core` (three source files).
+- Shared library `nebuladec_core` (four source files).
 - Public include directory exported as `include/` (both build- and install-interface in ament).
 - Explicit link against `yaml-cpp` (required on ROS 2 Jazzy).
+- CMake option `NEBULADEC_PROFILE` (default `OFF`). When `ON`, the
+  micro-profiler defined in `profiling.hpp` is active and the same
+  option must also be passed to dependent packages (see _Profiling_).
+
+## Profiling
+
+`nebuladec_core` ships an opt-in micro-profiler (`profiling.hpp` /
+`profiling.cpp`) intended for one-off perf investigations, not as a
+public API. It is disabled at build time by default; the
+`NEBULADEC_PROFILE_SCOPE("label")` macro expands to `((void)0)` and adds
+zero runtime cost.
+
+Enable it with:
+
+```bash
+colcon build --packages-select nebuladec_core nebuladec_adapters \
+  nebuladec_bag nebuladec_cli \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -D NEBULADEC_PROFILE=ON
+```
+
+When enabled, each instrumented scope (currently `Decoder::feed`, the
+sniff path, and each adapter's `feed` plus its upstream driver call)
+accumulates wall-clock nanoseconds and call counts into a process-global
+registry that is dumped to `stderr` from a static destructor at process
+exit. ament does not propagate `target_compile_definitions PUBLIC`
+across packages, so `nebuladec_adapters` independently honours the same
+option — both must be rebuilt together with `-D NEBULADEC_PROFILE=ON`.
 
 ## Consuming the library
 

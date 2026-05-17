@@ -20,6 +20,7 @@
 #include <nebula_core_common/nebula_status.hpp>
 #include <nebula_hesai_common/hesai_common.hpp>
 #include <nebula_hesai_decoders/hesai_driver.hpp>
+#include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
 #include <deque>
@@ -200,6 +201,7 @@ HesaiAdapter::~HesaiAdapter() = default;
 std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::feed(
   const std::vector<std::uint8_t> & packet, double /*stamp_sec*/)
 {
+  NEBULADEC_PROFILE_SCOPE("hesai_adapter_feed_total");
   if (!driver_ || packet.empty()) {
     return std::nullopt;
   }
@@ -208,7 +210,10 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::feed(
     first_scan_packets_.push_back(packet);
   }
 
-  driver_->parse_cloud_packet(packet);
+  {
+    NEBULADEC_PROFILE_SCOPE("hesai_driver_parse_cloud_packet");
+    driver_->parse_cloud_packet(packet);
+  }
 
   // Stop capturing once the decoder has produced at least one cloud:
   // replaying the packets that led up to (and including) the first cut

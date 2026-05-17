@@ -25,6 +25,15 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
+# Mirror nebuladec_core's opt-in profiler switch. ament does not propagate
+# target_compile_definitions across packages, so adapters must independently
+# define NEBULADEC_PROFILE=1 for the profiling macro to expand to active
+# instrumentation in the adapter translation units.
+option(NEBULADEC_PROFILE "Enable opt-in nebuladec micro-profiler" OFF)
+if(NEBULADEC_PROFILE)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC NEBULADEC_PROFILE=1)
+endif()
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # Formatting is enforced by clang-format via pre-commit; skip the redundant
@@ -44,6 +53,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_decoder_integration test/test_decoder_integration.cpp)
   target_link_libraries(test_decoder_integration ${PROJECT_NAME})
+
+  ament_add_gtest(test_decoder_concurrency test/test_decoder_concurrency.cpp)
+  target_link_libraries(test_decoder_concurrency ${PROJECT_NAME})
 endif()
 
 ament_auto_package()
