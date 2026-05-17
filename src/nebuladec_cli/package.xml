@@ -4,9 +4,9 @@
   <name>nebuladec_cli</name>
   <version>0.0.0</version>
   <description>
-    Command-line interface for nebuladec: `nebuladec inspect` reports a
-    packet bag's vendor/model and counts, `nebuladec convert` decodes it
-    into a sibling PointCloud2 bag using the same storage plugin.
+    Command-line interface for nebuladec: `nebuladec convert` decodes a
+    packet bag into a sibling PointCloud2 bag using the same storage
+    plugin.
   </description>
   <maintainer email="opensource@tier4.jp">TIER IV</maintainer>
   <license>Apache 2</license>
