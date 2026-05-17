@@ -17,7 +17,14 @@
 #include "nebuladec_adapters/accelerated_hesai_decoder.hpp"
 
 #include <nebula_hesai_decoders/decoders/pandar_128e4x.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_40.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_64.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_at128.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_qt128.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_qt64.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_xt16.hpp>
 #include <nebula_hesai_decoders/decoders/pandar_xt32.hpp>
+#include <nebula_hesai_decoders/decoders/pandar_xt32m.hpp>
 
 #include <memory>
 #include <stdexcept>
@@ -49,11 +56,21 @@ std::shared_ptr<nebula::drivers::HesaiScanDecoder> make_accelerated_decoder(
 
 bool AcceleratedHesaiDriver::supports(nebula::drivers::SensorModel model) noexcept
 {
-  // PandarXT32 and Pandar128_E4X are the two models exercised by the
-  // available Hesai sample bag; other Hesai models keep using upstream
-  // until a representative bag is available to validate against.
+  // The accelerated decoder is a template over upstream's `HesaiSensor<PacketT>`
+  // family; every Hesai model exposed by `hesai_adapter.cpp` derives from that
+  // base, so the same code path covers all of them. Output equivalence with
+  // upstream is verified against the per-model fixtures in upstream's
+  // `nebula_hesai/test_resources/decoder_ground_truth/` rather than via a
+  // device-specific sample bag.
   switch (model) {
+    case nebula::drivers::SensorModel::HESAI_PANDAR40P:
+    case nebula::drivers::SensorModel::HESAI_PANDAR64:
+    case nebula::drivers::SensorModel::HESAI_PANDARQT64:
+    case nebula::drivers::SensorModel::HESAI_PANDARQT128:
+    case nebula::drivers::SensorModel::HESAI_PANDARXT16:
     case nebula::drivers::SensorModel::HESAI_PANDARXT32:
+    case nebula::drivers::SensorModel::HESAI_PANDARXT32M:
+    case nebula::drivers::SensorModel::HESAI_PANDARAT128:
     case nebula::drivers::SensorModel::HESAI_PANDAR128_E4X:
       return true;
     default:
@@ -69,8 +86,36 @@ AcceleratedHesaiDriver::AcceleratedHesaiDriver(
 : logger_(logger)
 {
   switch (sensor_configuration->sensor_model) {
+    case nebula::drivers::SensorModel::HESAI_PANDAR40P:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::Pandar40>(
+        sensor_configuration, calibration, logger_);
+      break;
+    case nebula::drivers::SensorModel::HESAI_PANDAR64:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::Pandar64>(
+        sensor_configuration, calibration, logger_);
+      break;
+    case nebula::drivers::SensorModel::HESAI_PANDARQT64:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::PandarQT64>(
+        sensor_configuration, calibration, logger_);
+      break;
+    case nebula::drivers::SensorModel::HESAI_PANDARQT128:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::PandarQT128>(
+        sensor_configuration, calibration, logger_);
+      break;
+    case nebula::drivers::SensorModel::HESAI_PANDARXT16:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::PandarXT16>(
+        sensor_configuration, calibration, logger_);
+      break;
     case nebula::drivers::SensorModel::HESAI_PANDARXT32:
       scan_decoder_ = make_accelerated_decoder<nebula::drivers::PandarXT32>(
+        sensor_configuration, calibration, logger_);
+      break;
+    case nebula::drivers::SensorModel::HESAI_PANDARXT32M:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::PandarXT32M>(
+        sensor_configuration, calibration, logger_);
+      break;
+    case nebula::drivers::SensorModel::HESAI_PANDARAT128:
+      scan_decoder_ = make_accelerated_decoder<nebula::drivers::PandarAT128>(
         sensor_configuration, calibration, logger_);
       break;
     case nebula::drivers::SensorModel::HESAI_PANDAR128_E4X:
