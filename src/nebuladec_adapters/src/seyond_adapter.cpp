@@ -19,6 +19,7 @@
 #include <nebula_seyond_common/seyond_common.hpp>
 #include <nebula_seyond_common/seyond_configuration.hpp>
 #include <nebula_seyond_decoders/seyond_decoder.hpp>
+#include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
 #include <deque>
@@ -91,6 +92,7 @@ SeyondAdapter::~SeyondAdapter() = default;
 std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::feed(
   const std::vector<std::uint8_t> & packet, double /*stamp_sec*/)
 {
+  NEBULADEC_PROFILE_SCOPE("seyond_adapter_feed_total");
   if (!decoder_ || packet.empty()) {
     return std::nullopt;
   }
@@ -99,7 +101,11 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::feed(
     first_scan_packets_.push_back(packet);
   }
 
-  const auto result = decoder_->unpack(packet);
+  nebula::drivers::SeyondPacketDecodeResult result{};
+  {
+    NEBULADEC_PROFILE_SCOPE("seyond_decoder_unpack");
+    result = decoder_->unpack(packet);
+  }
   last_feed_scan_complete_ = result.scan_complete;
 
   if (!first_scan_captured_ && !ready_clouds_.empty()) {

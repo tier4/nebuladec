@@ -30,6 +30,11 @@ namespace nebuladec
 /// Stateless; callers that want robustness against corrupt or mixed streams
 /// should run `consensus()` across multiple packets.
 ///
+/// Thread-safety: stateless and read-only; a single instance is safe to
+/// share across any number of concurrent callers. Internally, identify()
+/// only reads from the input buffer and from immutable compile-time
+/// tables -- it touches no member state and acquires no locks.
+///
 /// `vendor_hint` lets the caller pre-commit the vendor (for example when it
 /// is derivable from the ROS 2 message type at the bag layer). When set,
 /// the sniffer restricts itself to that vendor's detectors and never

@@ -19,6 +19,7 @@
 #include <nebula_core_common/nebula_status.hpp>
 #include <nebula_velodyne_common/velodyne_common.hpp>
 #include <nebula_velodyne_decoders/velodyne_driver.hpp>
+#include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
 #include <exception>
@@ -137,6 +138,7 @@ VelodyneAdapter::~VelodyneAdapter() = default;
 std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::feed(
   const std::vector<std::uint8_t> & packet, double stamp_sec)
 {
+  NEBULADEC_PROFILE_SCOPE("velodyne_adapter_feed_total");
   if (!driver_ || packet.empty()) {
     return std::nullopt;
   }
@@ -145,7 +147,10 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::feed(
     first_scan_packets_.emplace_back(packet, stamp_sec);
   }
 
-  auto result = driver_->parse_cloud_packet(packet, stamp_sec);
+  auto result = [&] {
+    NEBULADEC_PROFILE_SCOPE("velodyne_driver_parse_cloud_packet");
+    return driver_->parse_cloud_packet(packet, stamp_sec);
+  }();
   auto & cloud = std::get<0>(result);
   const bool emitted = cloud && !cloud->empty();
 

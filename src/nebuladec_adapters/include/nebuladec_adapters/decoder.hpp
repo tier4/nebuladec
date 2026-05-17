@@ -35,6 +35,14 @@ namespace nebuladec
 /// vendor adapter and caches it. Subsequent packets flow straight through.
 /// Callers do not need to specify vendor, model, or any calibration: the
 /// Decoder recovers everything needed for decoding from the bytes alone.
+///
+/// Thread-safety: a single instance is NOT thread-safe -- the cached
+/// adapter and identity state are mutated on every `feed()`. **Distinct
+/// instances are independent and safe to drive concurrently from
+/// different threads**; this is the contract orchestrators (e.g. the
+/// bag I/O layer) rely on when dispatching one Decoder per lidar topic
+/// to a worker pool. See `test_decoder_concurrency.cpp` for the
+/// stress-tested guarantees.
 class Decoder
 {
 public:
@@ -88,6 +96,12 @@ private:
 /// Exposed so that advanced users can bypass Decoder's auto-routing and
 /// build pipelines directly on AnyDecoder. Returns nullptr if the vendor
 /// is not yet supported by nebuladec_adapters.
+///
+/// Thread-safety: re-entrant. Calibration and configuration loading
+/// happen inside each adapter constructor on per-instance state; the
+/// only shared state touched is the immutable `SupportRegistry`
+/// singleton and ament's package-share-dir lookup, both of which are
+/// safe to call from multiple threads concurrently.
 std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity);
 
 }  // namespace nebuladec

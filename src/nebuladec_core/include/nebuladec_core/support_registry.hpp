@@ -69,6 +69,12 @@ struct SupportDecision
 /// dry-run reporters both consult this table rather than maintaining
 /// their own copy of the support policy. When the adapter set grows to
 /// cover a new model, update the table here and every consumer follows.
+///
+/// Thread-safety: the `instance()` singleton is immutable after
+/// construction; both first-access and subsequent reads are safe to
+/// call from any number of threads concurrently (Meyers-singleton C++11
+/// guarantee). All public query methods take only `const` references
+/// to the internal tables.
 class SupportRegistry
 {
 public:
