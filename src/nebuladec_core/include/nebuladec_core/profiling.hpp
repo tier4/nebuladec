@@ -15,7 +15,7 @@
 #ifndef NEBULADEC_CORE__PROFILING_HPP_
 #define NEBULADEC_CORE__PROFILING_HPP_
 
-// Opt-in micro-profiler. Enabled at build time with -DNEBULADEC_PROFILE=1.
+// Opt-in micro-profiler. Enabled at build time with -D NEBULADEC_PROFILE=1.
 // When disabled the macros expand to nothing so Release builds are unchanged.
 // When enabled, NEBULADEC_PROFILE_SCOPE("label") accumulates wall-clock
 // nanoseconds and call counts per label into a process-global registry that

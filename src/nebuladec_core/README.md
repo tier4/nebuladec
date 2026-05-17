@@ -71,7 +71,7 @@ Enable it with:
 ```bash
 colcon build --packages-select nebuladec_core nebuladec_adapters \
   nebuladec_bag nebuladec_cli \
-  --cmake-args -DCMAKE_BUILD_TYPE=Release -DNEBULADEC_PROFILE=ON
+  --cmake-args -DCMAKE_BUILD_TYPE=Release -D NEBULADEC_PROFILE=ON
 ```
 
 When enabled, each instrumented scope (currently `Decoder::feed`, the
@@ -80,7 +80,7 @@ accumulates wall-clock nanoseconds and call counts into a process-global
 registry that is dumped to `stderr` from a static destructor at process
 exit. ament does not propagate `target_compile_definitions PUBLIC`
 across packages, so `nebuladec_adapters` independently honours the same
-option — both must be rebuilt together with `-DNEBULADEC_PROFILE=ON`.
+option — both must be rebuilt together with `-D NEBULADEC_PROFILE=ON`.
 
 ## Consuming the library
 

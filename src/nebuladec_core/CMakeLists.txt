@@ -32,7 +32,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_link_libraries(${PROJECT_NAME} yaml-cpp)
 
 # Opt-in micro-profiler. Off by default; enable with `colcon build
-# --cmake-args -DNEBULADEC_PROFILE=ON`. Propagated as a public compile
+# --cmake-args -D NEBULADEC_PROFILE=ON`. Propagated as a public compile
 # definition so adapter / cli code that includes profiling.hpp sees the
 # instrumented macro expansion.
 option(NEBULADEC_PROFILE "Enable opt-in nebuladec micro-profiler" OFF)
