@@ -55,6 +55,61 @@ TEST(HesaiAdapter, ReadyForPandarXT32)
   EXPECT_TRUE(adapter.is_ready());
 }
 
+// The remaining models route through `AcceleratedHesaiDriver` after the
+// template was extended to cover every `HesaiSensor<PacketT>` family member.
+// Each test verifies that the per-model bundled calibration loads cleanly and
+// that `AcceleratedHesaiDecoder<SensorT>` instantiates against the real
+// configuration --- a smoke check that exercises the template's compatibility
+// with every concrete SensorT.
+
+TEST(HesaiAdapter, ReadyForPandar64)
+{
+  adapters::HesaiAdapter adapter(make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDAR64));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
+TEST(HesaiAdapter, ReadyForPandarQT64)
+{
+  adapters::HesaiAdapter adapter(
+    make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDARQT64));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
+TEST(HesaiAdapter, ReadyForPandarQT128)
+{
+  adapters::HesaiAdapter adapter(
+    make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDARQT128));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
+TEST(HesaiAdapter, ReadyForPandarXT16)
+{
+  adapters::HesaiAdapter adapter(
+    make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDARXT16));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
+TEST(HesaiAdapter, ReadyForPandarXT32M)
+{
+  adapters::HesaiAdapter adapter(
+    make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDARXT32M));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
+TEST(HesaiAdapter, ReadyForPandarAT128)
+{
+  adapters::HesaiAdapter adapter(
+    make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDARAT128));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
+TEST(HesaiAdapter, ReadyForPandar128E4X)
+{
+  adapters::HesaiAdapter adapter(
+    make_hesai_identity(nebula::drivers::SensorModel::HESAI_PANDAR128_E4X));
+  EXPECT_TRUE(adapter.is_ready());
+}
+
 TEST(HesaiAdapter, NotReadyForUnknownModel)
 {
   Identity id;

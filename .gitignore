@@ -29,3 +29,8 @@ node_modules/
 
 # clangd / editor caches
 .cache/
+
+# ROS bag / MCAP data
+*.db3
+*.mcap
+*.bag

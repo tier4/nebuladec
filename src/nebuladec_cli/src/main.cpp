@@ -85,9 +85,8 @@ std::string identity_model(const std::optional<nebuladec::Identity> & id)
 int print_inspect_only(const std::string & input_path)
 {
   // Dry-run without a config: fall back to a vendor/model report of every
-  // packet topic in the bag. Equivalent to the now-removed `inspect`
-  // subcommand and useful for users who want to see what's in a bag
-  // before writing a mapping config.
+  // packet topic in the bag. Useful for users who want to see what's in a
+  // bag before writing a mapping config.
   const auto summary = nebuladec::bag::inspect(input_path);
   if (summary.topics.empty()) {
     std::cout << "no Nebula packet topics found in bag\n";

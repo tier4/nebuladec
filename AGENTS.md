@@ -64,15 +64,20 @@ Guidelines for AI agents contributing to this repository.
   already solves the problem; if a suitable OSS alternative exists,
   proactively propose it (with a brief note on maintenance status,
   license, and fit) instead of writing a custom implementation.
-- When writing any type that owns a dynamic resource (heap memory,
-  file descriptors, sockets, locks, GPU handles, etc.), strictly
-  follow RAII: acquire the resource in the constructor and release
+- For C++ code, you MUST follow RAII for any type that owns a dynamic
+  resource (heap memory, file descriptors, sockets, locks, GPU
+  handles, etc.): acquire the resource in the constructor and release
   it in the destructor, and make ownership semantics explicit via
-  smart pointers (`std::unique_ptr`, `std::shared_ptr`) or
-  equivalent owning wrappers. Code must be free of memory leaks,
-  double-free, use-after-free, dangling pointers, and forgotten
-  releases — prefer the rule of zero, and only fall back to the
-  rule of five with a clear justification.
+  smart pointers (`std::unique_ptr`, `std::shared_ptr`) or equivalent
+  owning wrappers. Code must be free of memory leaks, double-free,
+  use-after-free, dangling pointers, and forgotten releases — prefer
+  the rule of zero, and only fall back to the rule of five with a
+  clear justification. When the ECC (Everything Claude Code) plugin
+  is installed, additionally verify the code against the broader
+  checklist documented by the `/ecc:cpp-coding-standards` skill
+  (which subsumes these RAII rules and extends them with the full C++
+  Core Guidelines) and fix any violations in the affected locations
+  before considering the work complete.
 
 ## 7. Remote Repository Operations
 
