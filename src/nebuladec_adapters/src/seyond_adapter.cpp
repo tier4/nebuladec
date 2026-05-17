@@ -14,6 +14,8 @@
 
 #include "nebuladec_adapters/seyond_adapter.hpp"
 
+#include "nebuladec_adapters/fast_seyond_decoder.hpp"
+
 #include <nebula_core_common/nebula_common.hpp>
 #include <nebula_seyond_common/seyond_calibration_data.hpp>
 #include <nebula_seyond_common/seyond_common.hpp>
@@ -22,6 +24,8 @@
 #include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -47,6 +51,17 @@ nebula::drivers::SeyondConnectionConfiguration make_offline_connection()
   connection.udp_message_port = 0;
   connection.udp_status_port = 0;
   return connection;
+}
+
+// `NEBULADEC_FAST_SEYOND` opt-out: defaults to enabled. Set to "0" to
+// force the upstream nebula::drivers::SeyondDecoder; useful for A/B
+// timing comparisons or for falling back if FastSeyondDecoder regresses
+// on a new sensor variant. Read once at construction so the choice is
+// stable for the lifetime of the adapter.
+bool fast_decoder_opted_out() noexcept
+{
+  const char * raw = std::getenv("NEBULADEC_FAST_SEYOND");
+  return raw != nullptr && std::strcmp(raw, "0") == 0;
 }
 
 nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
@@ -83,8 +98,15 @@ SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
     }
   };
 
-  decoder_ = std::make_unique<nebula::drivers::SeyondDecoder>(
-    config, callback, nebula::drivers::SeyondCalibrationData{});
+  const bool use_fast =
+    FastSeyondDecoder::supports(config.sensor_model) && !fast_decoder_opted_out();
+  if (use_fast) {
+    fast_decoder_ = std::make_unique<FastSeyondDecoder>(
+      config, callback, nebula::drivers::SeyondCalibrationData{});
+  } else {
+    decoder_ = std::make_unique<nebula::drivers::SeyondDecoder>(
+      config, callback, nebula::drivers::SeyondCalibrationData{});
+  }
 }
 
 SeyondAdapter::~SeyondAdapter() = default;
@@ -93,7 +115,7 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::feed(
   const std::vector<std::uint8_t> & packet, double /*stamp_sec*/)
 {
   NEBULADEC_PROFILE_SCOPE("seyond_adapter_feed_total");
-  if (!decoder_ || packet.empty()) {
+  if ((!decoder_ && !fast_decoder_) || packet.empty()) {
     return std::nullopt;
   }
 
@@ -102,7 +124,10 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::feed(
   }
 
   nebula::drivers::SeyondPacketDecodeResult result{};
-  {
+  if (fast_decoder_) {
+    NEBULADEC_PROFILE_SCOPE("fast_seyond_decoder_unpack");
+    result = fast_decoder_->unpack(packet);
+  } else {
     NEBULADEC_PROFILE_SCOPE("seyond_decoder_unpack");
     result = decoder_->unpack(packet);
   }
@@ -134,11 +159,15 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> SeyondAdapter::flush()
   // case `current_scan_cloud_` is empty and replaying first-scan
   // packets would synthesise a spurious duplicate of the first scan
   // via the is_last_sub_frame path.
-  if (!decoder_ || first_scan_packets_.empty() || last_feed_scan_complete_) {
+  if ((!decoder_ && !fast_decoder_) || first_scan_packets_.empty() || last_feed_scan_complete_) {
     return std::nullopt;
   }
   for (const auto & pkt : first_scan_packets_) {
-    decoder_->unpack(pkt);
+    if (fast_decoder_) {
+      fast_decoder_->unpack(pkt);
+    } else {
+      decoder_->unpack(pkt);
+    }
     if (!ready_clouds_.empty()) {
       break;
     }

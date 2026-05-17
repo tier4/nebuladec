@@ -14,6 +14,8 @@
 
 #include "nebuladec_adapters/hesai_adapter.hpp"
 
+#include "nebuladec_adapters/fast_hesai_driver.hpp"
+
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <nebula_core_common/loggers/console_logger.hpp>
 #include <nebula_core_common/nebula_common.hpp>
@@ -23,6 +25,8 @@
 #include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <memory>
@@ -82,6 +86,17 @@ bool uses_correction_file(SensorModel model)
 {
   // AT128 ships a binary .dat correction file instead of the CSV format.
   return model == SensorModel::HESAI_PANDARAT128;
+}
+
+// NEBULADEC_FAST_HESAI opt-out: defaults to enabled. Set to "0" to force
+// the upstream nebula::drivers::HesaiDriver; useful for A/B timing
+// comparisons or for falling back if FastHesaiDriver regresses on a new
+// sensor variant. Read once at construction so the choice is stable for
+// the lifetime of the adapter.
+bool fast_hesai_opted_out() noexcept
+{
+  const char * raw = std::getenv("NEBULADEC_FAST_HESAI");
+  return raw != nullptr && std::strcmp(raw, "0") == 0;
 }
 
 std::shared_ptr<const HesaiCalibrationConfigurationBase> load_shipped_calibration(SensorModel model)
@@ -190,9 +205,14 @@ HesaiAdapter::HesaiAdapter(const Identity & identity) : identity_(identity)
 
   try {
     auto logger = std::make_shared<nebula::drivers::loggers::ConsoleLogger>("nebuladec.hesai");
-    driver_ = std::make_unique<HesaiDriver>(config, calibration, logger, callback);
+    if (FastHesaiDriver::supports(identity.model) && !fast_hesai_opted_out()) {
+      fast_driver_ = std::make_unique<FastHesaiDriver>(config, calibration, logger, callback);
+    } else {
+      driver_ = std::make_unique<HesaiDriver>(config, calibration, logger, callback);
+    }
   } catch (const std::exception &) {
     driver_.reset();
+    fast_driver_.reset();
   }
 }
 
@@ -202,7 +222,7 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::feed(
   const std::vector<std::uint8_t> & packet, double /*stamp_sec*/)
 {
   NEBULADEC_PROFILE_SCOPE("hesai_adapter_feed_total");
-  if (!driver_ || packet.empty()) {
+  if ((!driver_ && !fast_driver_) || packet.empty()) {
     return std::nullopt;
   }
 
@@ -210,7 +230,10 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::feed(
     first_scan_packets_.push_back(packet);
   }
 
-  {
+  if (fast_driver_) {
+    NEBULADEC_PROFILE_SCOPE("fast_hesai_driver_parse_cloud_packet");
+    fast_driver_->parse_cloud_packet(packet);
+  } else {
     NEBULADEC_PROFILE_SCOPE("hesai_driver_parse_cloud_packet");
     driver_->parse_cloud_packet(packet);
   }
@@ -240,11 +263,15 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::flush()
   // those packets are known to have triggered at least one cut (that
   // is precisely the condition under which we stopped capturing), so
   // feeding them again guarantees the trailing buffer is emitted.
-  if (!driver_ || first_scan_packets_.empty()) {
+  if ((!driver_ && !fast_driver_) || first_scan_packets_.empty()) {
     return std::nullopt;
   }
   for (const auto & pkt : first_scan_packets_) {
-    driver_->parse_cloud_packet(pkt);
+    if (fast_driver_) {
+      fast_driver_->parse_cloud_packet(pkt);
+    } else {
+      driver_->parse_cloud_packet(pkt);
+    }
     if (!ready_clouds_.empty()) {
       break;  // Got the trailing cloud; stop replaying.
     }
