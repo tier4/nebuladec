@@ -74,12 +74,23 @@ colcon build --packages-select nebuladec_core nebuladec_adapters \
   --cmake-args -DCMAKE_BUILD_TYPE=Release -D NEBULADEC_PROFILE=ON
 ```
 
-When enabled, each instrumented scope (currently `Decoder::feed`, the
-sniff path, and each adapter's `feed` plus its upstream driver call)
-accumulates wall-clock nanoseconds and call counts into a process-global
-registry that is dumped to `stderr` from a static destructor at process
-exit. ament does not propagate `target_compile_definitions PUBLIC`
-across packages, so `nebuladec_adapters` independently honours the same
+When enabled, each instrumented scope accumulates wall-clock
+nanoseconds and call counts into a process-global registry that is
+dumped to `stderr` from a static destructor at process exit. Current
+scopes:
+
+- `decoder_feed_total`, `decoder_feed_sniff` (in `Decoder::feed`)
+- `<vendor>_adapter_feed_total` and the wrapped upstream driver call
+  (`accelerated_<vendor>_*_unpack` / `<vendor>_decoder_unpack`) per
+  adapter
+- For Hesai, three additional scopes inside
+  `AcceleratedHesaiDecoder::unpack`:
+  `accelerated_hesai_angle_correct`,
+  `accelerated_hesai_scan_cutter_step`, and
+  `accelerated_hesai_convert_returns`
+
+ament does not propagate `target_compile_definitions PUBLIC` across
+packages, so `nebuladec_adapters` independently honours the same
 option — both must be rebuilt together with `-D NEBULADEC_PROFILE=ON`.
 
 ## Consuming the library

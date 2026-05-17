@@ -60,7 +60,14 @@ themselves safe to share across threads. See
 ## Tests (`test/`)
 
 - `test_decoder.cpp` — `Decoder` identity lifecycle, garbage-packet tolerance, Seyond routing, `min_points` getter/setter, and `make_adapter` behavior for Seyond and unknown vendors.
-- `test_hesai_adapter.cpp` — `is_ready()` for Pandar40P and PandarXT32, rejection of UNKNOWN model, empty-packet safety, and a `make_adapter` round-trip.
+- `test_hesai_adapter.cpp` — `is_ready()` smoke tests for every Hesai
+  model the adapter exposes (Pandar40P, Pandar64, PandarQT64,
+  PandarQT128, PandarXT16, PandarXT32, PandarXT32M, PandarAT128,
+  Pandar128_E4X), rejection of UNKNOWN model, empty-packet safety,
+  and a `make_adapter` round-trip. Each model exercises the
+  `HesaiAdapter` → `AcceleratedHesaiDriver` →
+  `AcceleratedHesaiDecoder<SensorT>` instantiation path with the
+  bundled calibration.
 - `test_velodyne_adapter.cpp` — `is_ready()` for VLP16 and VLS128, rejection of UNKNOWN model, and empty-packet safety.
 - `test_decoder_integration.cpp` — End-to-end Sniffer → `make_adapter` → `AnyDecoder::feed`. Realistic byte sequences for Hesai Pandar40P, Velodyne VLP16, Seyond, and Robosense (Helios, BpearlV3). Confirms Robosense and garbage produce no point clouds.
 - `test_decoder_concurrency.cpp` — Stress tests for the per-instance thread-safety contract: a shared `PacketSniffer` and `SupportRegistry::instance()` driven from 4 threads, 4 independent per-thread Seyond `Decoder`s, and 4 mixed-vendor (Seyond / Hesai / Velodyne) `Decoder`s constructed and fed concurrently. Catches races in calibration loading and in the package-share-dir lookup that `make_adapter` performs.
