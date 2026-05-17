@@ -48,6 +48,7 @@
 #include <nebula_core_common/point_types.hpp>
 #include <nebula_core_common/util/stopwatch.hpp>  // nebula::util::Stopwatch
 #include <nebula_hesai_common/hesai_common.hpp>
+#include <nebuladec_core/profiling.hpp>
 
 #include <array>
 #include <cmath>
@@ -112,10 +113,19 @@ public:
 
     for (std::size_t block_id = 0; block_id < SensorT::packet_t::n_blocks; block_id += n_returns) {
       const auto block_azimuth = packet_.body.blocks[block_id].get_azimuth();
-      const auto channel_azimuths_out = angle_corrector_.get_corrected_azimuths(block_azimuth);
+      // IIFE-wrapped profile scopes time only the inner call without forcing
+      // us to spell out the SensorT-dependent return types here.
+      const auto channel_azimuths_out = [&]() {
+        NEBULADEC_PROFILE_SCOPE("accelerated_hesai_angle_correct");
+        return angle_corrector_.get_corrected_azimuths(block_azimuth);
+      }();
       current_block_id_ = block_id;
-      const auto & scan_state = scan_cutter_.step(channel_azimuths_out);
+      const auto scan_state = [&]() {
+        NEBULADEC_PROFILE_SCOPE("accelerated_hesai_scan_cutter_step");
+        return scan_cutter_.step(channel_azimuths_out);
+      }();
       if (scan_state.does_block_intersect_fov()) {
+        NEBULADEC_PROFILE_SCOPE("accelerated_hesai_convert_returns");
         convert_returns(
           block_id, n_returns, scan_state, return_mode_enum, dis_unit_f, packet_timestamp_ns);
       }
