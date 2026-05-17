@@ -90,6 +90,43 @@ struct FalconAdjustment
   float z;
 };
 
+// Upstream form: floor(value / unit + 0.5) * unit. Same math as the
+// previous per-point lambda; preserved verbatim so the cached table holds
+// the exact float values the prior path produced.
+inline float quantize_falcon_adjustment(double value) noexcept
+{
+  return static_cast<float>(
+    std::floor(value / k_falcon_nps_adjustment_unit_meters + 0.5) *
+    k_falcon_nps_adjustment_unit_meters);
+}
+
+// Process-wide cache of quantized FalconAdjustment values, indexed by
+// (channel, v_index, h_index). The masked indices match upstream's
+// `lookup_falcon_adjustment` in `seyond_decoder.cpp:238-247`, so any
+// out-of-declared-bounds reads of `falcon_ps_to_nps_adjustment` during
+// cache construction yield the same bytes upstream would observe at the
+// same indices at run time.
+inline const auto & falcon_adjustment_cache() noexcept
+{
+  using Row = std::array<FalconAdjustment, k_falcon_nps_table_size_h>;
+  using Slab = std::array<Row, k_falcon_nps_table_size_v>;
+  using Table = std::array<Slab, 4>;
+  static const Table cache = []() {
+    Table table{};
+    for (std::size_t ch = 0; ch < 4; ++ch) {
+      for (std::size_t v = 0; v < k_falcon_nps_table_size_v; ++v) {
+        for (std::size_t h = 0; h < k_falcon_nps_table_size_h; ++h) {
+          table[ch][v][h] = {
+            quantize_falcon_adjustment(nebula::drivers::falcon_ps_to_nps_adjustment[0][ch][v][h]),
+            quantize_falcon_adjustment(nebula::drivers::falcon_ps_to_nps_adjustment[1][ch][v][h])};
+        }
+      }
+    }
+    return table;
+  }();
+  return cache;
+}
+
 inline FalconAdjustment lookup_falcon_adjustment_f(
   int h_angle, int v_angle, std::uint32_t channel) noexcept
 {
@@ -100,21 +137,8 @@ inline FalconAdjustment lookup_falcon_adjustment_f(
   int h_index = (h_angle >> k_falcon_nps_table_shift) + k_falcon_nps_effective_half_size_h;
   v_index &= (k_falcon_nps_table_size_v - 1);
   h_index &= (k_falcon_nps_table_size_h - 1);
-
-  // Upstream form: floor(value / unit + 0.5) * unit. Quantizing on
-  // every lookup mirrors upstream behavior so output is bit-identical;
-  // hoisting the quantization to construction would require copying the
-  // 5760-entry table, which we measured to be a worse tradeoff than the
-  // per-point work this loop already drops.
-  const auto quantize = [](double value) -> float {
-    return static_cast<float>(
-      std::floor(value / k_falcon_nps_adjustment_unit_meters + 0.5) *
-      k_falcon_nps_adjustment_unit_meters);
-  };
-
-  return {
-    quantize(nebula::drivers::falcon_ps_to_nps_adjustment[0][channel][v_index][h_index]),
-    quantize(nebula::drivers::falcon_ps_to_nps_adjustment[1][channel][v_index][h_index])};
+  return falcon_adjustment_cache()[channel][static_cast<std::size_t>(v_index)]
+                                  [static_cast<std::size_t>(h_index)];
 }
 
 inline std::uint64_t packet_timestamp_us_to_ns(double packet_timestamp_us) noexcept
