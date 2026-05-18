@@ -214,15 +214,15 @@ TEST(SeyondDecoderWrapper, AngleHvMidStreamDoesNotCrash)
   SeyondDecoder decoder(make_robin_w_config(), noop_callback());
 
   const auto pre = make_packet(k_magic, /*type=*/7, 1000.0, /*body_size=*/64);
-  const auto anglehv = make_packet(k_magic, k_robinw_angle_hv, 2000.0, /*body_size=*/128);
+  const auto angle_hv = make_packet(k_magic, k_robinw_angle_hv, 2000.0, /*body_size=*/128);
   const auto post = make_packet(k_magic, /*type=*/7, 3000.0, /*body_size=*/64);
 
   EXPECT_NO_THROW(decoder.unpack(pre));
 
-  const auto result_anglehv = decoder.unpack(anglehv);
-  EXPECT_EQ(result_anglehv.points_unpacked, 0U);
-  EXPECT_FALSE(result_anglehv.scan_complete);
-  EXPECT_EQ(result_anglehv.sensor_timestamp_ns, 2000000ULL);
+  const auto result_angle_hv = decoder.unpack(angle_hv);
+  EXPECT_EQ(result_angle_hv.points_unpacked, 0U);
+  EXPECT_FALSE(result_angle_hv.scan_complete);
+  EXPECT_EQ(result_angle_hv.sensor_timestamp_ns, 2000000ULL);
 
   EXPECT_NO_THROW(decoder.unpack(post));
 }
