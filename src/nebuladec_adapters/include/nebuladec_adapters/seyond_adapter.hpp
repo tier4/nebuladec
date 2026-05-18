@@ -24,13 +24,12 @@
 #include <optional>
 #include <vector>
 
-namespace nebula::drivers
-{
-class SeyondDecoder;
-}
-
 namespace nebuladec::adapters
 {
+
+// Forward-declared private wrapper that lives under src/. See
+// src/nebuladec_adapters/src/seyond_decoder.hpp for details.
+class SeyondDecoder;
 
 /// @brief Adapter that wraps Nebula's SeyondDecoder.
 ///
@@ -58,7 +57,7 @@ public:
 
 private:
   Identity identity_;
-  std::unique_ptr<nebula::drivers::SeyondDecoder> decoder_;
+  std::unique_ptr<SeyondDecoder> decoder_;
   std::deque<nebula::drivers::NebulaPointCloudPtr> ready_clouds_;
   /// Packets from the first scan of the stream, captured until the
   /// decoder fires its first callback. Replayed by flush() so the

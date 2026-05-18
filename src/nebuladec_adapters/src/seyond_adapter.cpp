@@ -14,8 +14,9 @@
 
 #include "nebuladec_adapters/seyond_adapter.hpp"
 
+#include "seyond_decoder.hpp"
+
 #include <nebula_core_common/nebula_common.hpp>
-#include <nebula_seyond_common/seyond_calibration_data.hpp>
 #include <nebula_seyond_common/seyond_common.hpp>
 #include <nebula_seyond_common/seyond_configuration.hpp>
 #include <nebula_seyond_decoders/seyond_decoder.hpp>
@@ -83,8 +84,7 @@ SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
     }
   };
 
-  decoder_ = std::make_unique<nebula::drivers::SeyondDecoder>(
-    config, callback, nebula::drivers::SeyondCalibrationData{});
+  decoder_ = std::make_unique<SeyondDecoder>(std::move(config), callback);
 }
 
 SeyondAdapter::~SeyondAdapter() = default;

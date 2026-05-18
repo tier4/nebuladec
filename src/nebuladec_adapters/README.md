@@ -56,6 +56,7 @@ themselves safe to share across threads. See
 
 - `decoder.cpp` — The `Decoder` class (`feed/flush/identity/set_vendor_hint/set_min_points`) and the `make_adapter` factory.
 - `hesai_adapter.cpp`, `velodyne_adapter.cpp`, `seyond_adapter.cpp` — Per-vendor adapter shims.
+- `seyond_decoder.{hpp,cpp}` — Private composition wrapper `nebuladec::adapters::SeyondDecoder` (shares the class name with `nebula::drivers::SeyondDecoder` but is namespace-disambiguated and only consumed from `seyond_adapter.cpp`). Inspects each packet before forwarding; on the first `angle_hv_table` packet (`type=100/101/103/104`) it strips the 70-byte header and rebuilds the inner `nebula::drivers::SeyondDecoder` once with the recovered calibration. Subsequent `angle_hv_table` packets are ignored. This makes offline replay of RobinW / RobinE1X / RobinE2X / HummingbirdD1 streams decode correctly without an external `calibration_file`.
 
 ## Tests (`test/`)
 
@@ -71,6 +72,7 @@ themselves safe to share across threads. See
 - `test_velodyne_adapter.cpp` — `is_ready()` for VLP16 and VLS128, rejection of UNKNOWN model, and empty-packet safety.
 - `test_decoder_integration.cpp` — End-to-end Sniffer → `make_adapter` → `AnyDecoder::feed`. Realistic byte sequences for Hesai Pandar40P, Velodyne VLP16, Seyond, and Robosense (Helios, BpearlV3). Confirms Robosense and garbage produce no point clouds.
 - `test_decoder_concurrency.cpp` — Stress tests for the per-instance thread-safety contract: a shared `PacketSniffer` and `SupportRegistry::instance()` driven from 4 threads, 4 independent per-thread Seyond `Decoder`s, and 4 mixed-vendor (Seyond / Hesai / Velodyne) `Decoder`s constructed and fed concurrently. Catches races in calibration loading and in the package-share-dir lookup that `make_adapter` performs.
+- `test_seyond_decoder.cpp` — Unit tests for the private `nebuladec::adapters::SeyondDecoder` wrapper. Covers angle_hv_table detection by magic + type, rejection of undersized / wrong-magic / non-angle_hv packets, malformed `common.size` not latching the applied flag (allowing a later well-formed packet to apply), repeated angle_hv packets accepted, and mid-stream rebuild leaving the wrapper usable for subsequent forwarding.
 
 ## Dependencies
 
@@ -85,8 +87,8 @@ themselves safe to share across threads. See
 
 ## Build artifacts
 
-- Shared library `nebuladec_adapters` (four source files). Public includes exported via `include/`.
-- Test executables: `test_decoder`, `test_hesai_adapter`, `test_velodyne_adapter`, `test_decoder_integration`, `test_decoder_concurrency`.
+- Shared library `nebuladec_adapters` (five source files). Public includes exported via `include/`.
+- Test executables: `test_decoder`, `test_hesai_adapter`, `test_velodyne_adapter`, `test_decoder_integration`, `test_decoder_concurrency`, `test_seyond_decoder`.
 - `ament_cmake_uncrustify` is suppressed — formatting is enforced by clang-format via pre-commit.
 - CMake option `NEBULADEC_PROFILE` (default `OFF`) mirrors the same
   option on `nebuladec_core`. When `ON`, the adapter's `feed` paths and
