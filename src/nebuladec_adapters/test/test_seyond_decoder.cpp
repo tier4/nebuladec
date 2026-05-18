@@ -77,8 +77,8 @@ std::vector<std::uint8_t> make_packet(
 }
 
 constexpr std::uint16_t k_magic = nebula::drivers::detail::seyond_data_packet_magic;
-constexpr std::uint8_t k_robinw_anglehv = nebula::drivers::detail::robinw_angle_hv_table_type;
-constexpr std::uint8_t k_robine1x_anglehv = nebula::drivers::detail::robine1x_angle_hv_table_type;
+constexpr std::uint8_t k_robinw_angle_hv = nebula::drivers::detail::robinw_angle_hv_table_type;
+constexpr std::uint8_t k_robine1x_angle_hv = nebula::drivers::detail::robine1x_angle_hv_table_type;
 
 }  // namespace
 
@@ -90,7 +90,7 @@ TEST(SeyondDecoderWrapper, ConstructsWithoutCalibration)
 TEST(SeyondDecoderWrapper, DetectsAngleHvByMagicAndType)
 {
   SeyondDecoder decoder(make_robin_w_config(), noop_callback());
-  const auto packet = make_packet(k_magic, k_robinw_anglehv, 1234.0, /*body_size=*/128);
+  const auto packet = make_packet(k_magic, k_robinw_angle_hv, 1234.0, /*body_size=*/128);
 
   const auto result = decoder.unpack(packet);
 
@@ -134,7 +134,7 @@ TEST(SeyondDecoderWrapper, IgnoresWrongMagic)
   SeyondDecoder decoder(make_robin_w_config(), noop_callback());
   // Wrong magic -> wrapper forwards; nebula's inner unpack returns
   // {0, 0, false} on magic mismatch.
-  const auto packet = make_packet(/*magic=*/0xDEAD, k_robinw_anglehv, 0.0, /*body_size=*/64);
+  const auto packet = make_packet(/*magic=*/0xDEAD, k_robinw_angle_hv, 0.0, /*body_size=*/64);
   const auto result = decoder.unpack(packet);
   EXPECT_EQ(result.points_unpacked, 0U);
   EXPECT_FALSE(result.scan_complete);
@@ -159,7 +159,7 @@ TEST(SeyondDecoderWrapper, MalformedAngleHvDoesNotCrash)
   // sanity check and bails without latching.
   constexpr std::uint32_t bogus_size = 1U << 30U;
   const auto packet = make_packet(
-    k_magic, k_robinw_anglehv, 100.0, /*body_size=*/64, /*declared_size_override=*/bogus_size);
+    k_magic, k_robinw_angle_hv, 100.0, /*body_size=*/64, /*declared_size_override=*/bogus_size);
 
   const auto result = decoder.unpack(packet);
   EXPECT_EQ(result.points_unpacked, 0U);
@@ -167,7 +167,7 @@ TEST(SeyondDecoderWrapper, MalformedAngleHvDoesNotCrash)
   EXPECT_EQ(result.sensor_timestamp_ns, 100000ULL);
 
   // Follow-up well-formed packet must still be accepted by the wrapper.
-  const auto good = make_packet(k_magic, k_robinw_anglehv, 200.0, /*body_size=*/128);
+  const auto good = make_packet(k_magic, k_robinw_angle_hv, 200.0, /*body_size=*/128);
   const auto result2 = decoder.unpack(good);
   EXPECT_EQ(result2.points_unpacked, 0U);
   EXPECT_FALSE(result2.scan_complete);
@@ -181,9 +181,9 @@ TEST(SeyondDecoderWrapper, RepeatedAngleHvPacketsAreAccepted)
   // The point is that the wrapper accepts the stream without crashing
   // or producing surprising side effects.
   SeyondDecoder decoder(make_robin_w_config(), noop_callback());
-  const auto p1 = make_packet(k_magic, k_robinw_anglehv, 100.0, /*body_size=*/128);
-  const auto p2 = make_packet(k_magic, k_robinw_anglehv, 200.0, /*body_size=*/256);
-  const auto p3 = make_packet(k_magic, k_robine1x_anglehv, 300.0, /*body_size=*/64);
+  const auto p1 = make_packet(k_magic, k_robinw_angle_hv, 100.0, /*body_size=*/128);
+  const auto p2 = make_packet(k_magic, k_robinw_angle_hv, 200.0, /*body_size=*/256);
+  const auto p3 = make_packet(k_magic, k_robine1x_angle_hv, 300.0, /*body_size=*/64);
 
   for (const auto * pkt : {&p1, &p2, &p3}) {
     const auto result = decoder.unpack(*pkt);
@@ -198,7 +198,7 @@ TEST(SeyondDecoderWrapper, AngleHvBeforeAnyPointPacket)
   // (typical of RobinW). The wrapper must accept angle_hv as the very
   // first input without requiring a prior packet.
   SeyondDecoder decoder(make_robin_w_config(), noop_callback());
-  const auto packet = make_packet(k_magic, k_robinw_anglehv, 42.0, /*body_size=*/256);
+  const auto packet = make_packet(k_magic, k_robinw_angle_hv, 42.0, /*body_size=*/256);
 
   const auto result = decoder.unpack(packet);
   EXPECT_EQ(result.points_unpacked, 0U);
@@ -214,7 +214,7 @@ TEST(SeyondDecoderWrapper, AngleHvMidStreamDoesNotCrash)
   SeyondDecoder decoder(make_robin_w_config(), noop_callback());
 
   const auto pre = make_packet(k_magic, /*type=*/7, 1000.0, /*body_size=*/64);
-  const auto anglehv = make_packet(k_magic, k_robinw_anglehv, 2000.0, /*body_size=*/128);
+  const auto anglehv = make_packet(k_magic, k_robinw_angle_hv, 2000.0, /*body_size=*/128);
   const auto post = make_packet(k_magic, /*type=*/7, 3000.0, /*body_size=*/64);
 
   EXPECT_NO_THROW(decoder.unpack(pre));
