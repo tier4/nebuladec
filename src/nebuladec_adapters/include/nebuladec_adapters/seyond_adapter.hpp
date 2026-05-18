@@ -71,6 +71,11 @@ private:
   /// recover -- otherwise a clean end-of-bag would leak a duplicate of
   /// the first scan through the is_last_sub_frame path.
   bool last_feed_scan_complete_{false};
+  /// True when the resolved sub-model is RobinW. Nebula upstream applies
+  /// a hardcoded 180-degree X-axis rotation only for RobinW; we cancel
+  /// that rotation in the callback so this adapter emits clouds in the
+  /// same sensor body frame as every other Seyond sub-model.
+  bool is_robin_w_{false};
 };
 
 }  // namespace nebuladec::adapters

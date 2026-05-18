@@ -17,11 +17,13 @@
 #include "seyond_decoder.hpp"
 
 #include <nebula_core_common/nebula_common.hpp>
+#include <nebula_core_common/point_types.hpp>
 #include <nebula_seyond_common/seyond_common.hpp>
 #include <nebula_seyond_common/seyond_configuration.hpp>
 #include <nebula_seyond_decoders/seyond_decoder.hpp>
 #include <nebuladec_core/profiling.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -63,6 +65,30 @@ nebula::drivers::SeyondSensorModel pick_seyond_model(const Identity & identity)
   return nebula::drivers::SeyondSensorModel::FALCON_K;
 }
 
+// Cancel Nebula upstream's hardcoded 180-degree rotation around the X
+// axis applied only when sensor_model == ROBIN_W (see
+// nebula_seyond_decoders/src/seyond_decoder.cpp parse_robin_w_e1x and
+// parse_robin_compact: `y = -y; z = -z;`). Other Seyond sub-models leave
+// the sensor body frame untouched, so without this cancellation RobinW
+// clouds appear upside-down relative to every other adapter output. We
+// flip y/z back and patch the spherical fields Nebula derives from the
+// flipped cartesian coordinates (azimuth -> (360 - a) mod 360,
+// elevation -> -elevation).
+void cancel_robin_w_flip(nebula::drivers::NebulaPointCloud & cloud)
+{
+  for (auto & point : cloud) {
+    point.y = -point.y;
+    point.z = -point.z;
+    point.elevation = -point.elevation;
+    float az = 360.0F - point.azimuth;
+    az = std::fmod(az, 360.0F);
+    if (az < 0.0F) {
+      az += 360.0F;
+    }
+    point.azimuth = az;
+  }
+}
+
 }  // namespace
 
 SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
@@ -77,9 +103,14 @@ SeyondAdapter::SeyondAdapter(const Identity & identity) : identity_(identity)
   config.setup_sensor = false;
   config.return_mode = nebula::drivers::ReturnMode::STRONGEST;
 
+  is_robin_w_ = (config.sensor_model == nebula::drivers::SeyondSensorModel::ROBIN_W);
+
   auto callback = [this](
                     nebula::drivers::NebulaPointCloudPtr cloud, std::uint64_t /*timestamp_ns*/) {
     if (cloud && !cloud->empty()) {
+      if (is_robin_w_) {
+        cancel_robin_w_flip(*cloud);
+      }
       ready_clouds_.push_back(std::move(cloud));
     }
   };
