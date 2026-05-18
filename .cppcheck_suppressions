@@ -2,6 +2,19 @@
 *:*/examples/*
 *:*/benchmarks/*
 
+# OutputWriter passes `std::string_view` by value by design (matches
+# the underlying McapDefinitionWriter / rosbag2 string-view APIs).
+# cppcheck's heuristic flags pure-forwarding methods as "should be
+# const ref", a false positive for the lightweight value type
+# `std::string_view`.
+passedByValue:src/nebuladec_bag/src/output_writer.cpp
+
+# bag_io.cpp's parallel-pipeline driver uses chained `>>>` template
+# closers (`std::unique_ptr<BoundedQueue<...>>`, etc.) that the
+# installed cppcheck release mis-tokenises into a spurious `syntaxError`.
+# The code compiles cleanly with gcc/clang and passes clang-tidy.
+syntaxError:src/nebuladec_bag/src/bag_io.cpp
+
 checkersReport
 missingInclude
 missingIncludeSystem

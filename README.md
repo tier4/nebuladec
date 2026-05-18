@@ -14,6 +14,7 @@ workspace adds a thin layer that makes those drivers easy to use in a
 - Passes everything else (TF, IMU, cameras, unsupported LiDARs, etc.) through verbatim.
 - Lets a YAML mapping rewrite input topics into output topic names and `frame_id` values.
 - Supports a dry-run mode that prints the plan without writing any bag.
+- Runs as a 3-stage pipeline by default (reader → decoder worker pool → K-way merge writer) for concurrent decoding of multiple LiDAR topics; auto-falls-back to a single-threaded path on hosts with fewer than 3 hardware threads. See [`src/nebuladec_bag/README.md`](src/nebuladec_bag/README.md#performance-3-stage-pipeline-for-convert) for the architecture and [`src/nebuladec_cli/README.md`](src/nebuladec_cli/README.md#performance-parallel-pipeline) for the `--workers` / `--sequential` CLI flags.
 
 ## Supported sensors
 
@@ -110,8 +111,15 @@ nebuladec convert path/to/input_bag --dry-run
 # Preview what conversion would produce once a mapping is applied
 nebuladec convert path/to/input_bag --dry-run -c config/x2.yaml
 
-# Real conversion: decode packets to PointCloud2; pass everything else through
+# Real conversion: decode packets to PointCloud2; pass everything else through.
+# The 3-stage parallel pipeline runs by default with min(num_cores, num_lidar_topics) workers.
 nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml
+
+# Override the decoder worker count (default: auto).
+nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --workers 4
+
+# Force the legacy single-threaded path (e.g. byte-for-byte regression comparison).
+nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --sequential
 ```
 
 ### Mapping YAML

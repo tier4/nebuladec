@@ -19,6 +19,7 @@
 #include <nebuladec_core/topic_mapping.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -87,11 +88,26 @@ InspectSummary inspect(const std::string & input_path);
 /// by `mapping`; no CLI overrides exist for individual topics. Packet
 /// topics in the bag that match no rule are skipped and logged by the
 /// caller.
+///
+/// `sequential` and `workers` control the execution model:
+///   * `sequential = true` forces the legacy single-threaded path.
+///   * `sequential = false` (default) selects the 3-stage pipeline
+///     (Reader → Worker pool → Writer). The pipeline auto-falls-back
+///     to the sequential path when `hardware_concurrency() < 3` or
+///     when the bag has no decodable LiDAR topics.
+///   * `workers = 0` (default) means "auto": pick
+///     `min(hardware_concurrency, K)` where K is the count of decoded
+///     packet topics. Any positive value is clamped to `min(N, K)` and,
+///     when the result is `< K`, snapped down to the largest divisor of
+///     K so each worker can be assigned an equal share of topics.
+///   * `workers` is ignored when `sequential = true`.
 struct ConvertOptions
 {
   std::string input_path;
   std::string output_path;
   TopicMapping mapping;
+  bool sequential{false};
+  std::size_t workers{0};
 };
 
 /// @brief Per-in-topic conversion statistics produced by `convert()`.
