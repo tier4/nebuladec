@@ -57,9 +57,8 @@ if(BUILD_TESTING)
 
   # Bag-agnostic unit tests for the K-way merge driver
   # (`k_way_merge_drive`), `BoundedQueue<T>`, `Watermark`, and
-  # `AbortFlag`. Exercises the four scenarios called out in
-  # `docs/parallel_convert.md`: single source ordering, two-source
-  # interleave, watermark unblocking, and abort-while-waiting.
+  # `AbortFlag`. Exercises four scenarios: single source ordering,
+  # two-source interleave, watermark unblocking, and abort-while-waiting.
   ament_add_gtest(test_convert_parallel_kway_merge
     test/test_convert_parallel_kway_merge.cpp)
   target_link_libraries(test_convert_parallel_kway_merge ${PROJECT_NAME})

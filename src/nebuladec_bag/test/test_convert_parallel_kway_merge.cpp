@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Bag-agnostic unit tests for `k_way_merge_drive`, exercising the four
-// scenarios called out in `docs/parallel_convert.md`:
+// Bag-agnostic unit tests for `k_way_merge_drive`, exercising four
+// scenarios:
 //
 //   1. Single source, N items -> merger emits all N in order.
 //   2. Two sources with interleaved stamps -> merger interleaves them
