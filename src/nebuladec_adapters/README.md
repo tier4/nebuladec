@@ -65,9 +65,9 @@ themselves safe to share across threads. See
   PandarQT128, PandarXT16, PandarXT32, PandarXT32M, PandarAT128,
   Pandar128_E4X), rejection of UNKNOWN model, empty-packet safety,
   and a `make_adapter` round-trip. Each model exercises the
-  `HesaiAdapter` → `AcceleratedHesaiDriver` →
-  `AcceleratedHesaiDecoder<SensorT>` instantiation path with the
-  bundled calibration.
+  `HesaiAdapter` → upstream `nebula::drivers::HesaiDriver` →
+  `HesaiDecoder<SensorT>` instantiation path with the bundled
+  calibration.
 - `test_velodyne_adapter.cpp` — `is_ready()` for VLP16 and VLS128, rejection of UNKNOWN model, and empty-packet safety.
 - `test_decoder_integration.cpp` — End-to-end Sniffer → `make_adapter` → `AnyDecoder::feed`. Realistic byte sequences for Hesai Pandar40P, Velodyne VLP16, Seyond, and Robosense (Helios, BpearlV3). Confirms Robosense and garbage produce no point clouds.
 - `test_decoder_concurrency.cpp` — Stress tests for the per-instance thread-safety contract: a shared `PacketSniffer` and `SupportRegistry::instance()` driven from 4 threads, 4 independent per-thread Seyond `Decoder`s, and 4 mixed-vendor (Seyond / Hesai / Velodyne) `Decoder`s constructed and fed concurrently. Catches races in calibration loading and in the package-share-dir lookup that `make_adapter` performs.

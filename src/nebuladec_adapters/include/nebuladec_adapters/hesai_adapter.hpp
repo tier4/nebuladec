@@ -32,8 +32,6 @@ class HesaiDriver;
 namespace nebuladec::adapters
 {
 
-class AcceleratedHesaiDriver;
-
 /// @brief Adapter that wraps Nebula's HesaiDriver.
 ///
 /// Calibration is loaded from the CSV / .dat files shipped by the
@@ -51,10 +49,7 @@ public:
 
   /// True iff the adapter fully initialised (identified model with a
   /// loadable calibration). A false value makes feed() a no-op.
-  [[nodiscard]] bool is_ready() const
-  {
-    return driver_ != nullptr || accelerated_driver_ != nullptr;
-  }
+  [[nodiscard]] bool is_ready() const { return driver_ != nullptr; }
 
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
@@ -69,12 +64,7 @@ public:
 
 private:
   Identity identity_;
-  // Exactly one of these is non-null after a successful construction.
-  // `accelerated_driver_` wins when `AcceleratedHesaiDriver::supports(model)` returns
-  // true and the `NEBULADEC_ACCELERATED_HESAI` environment variable is not "0".
-  // Otherwise the adapter routes through the upstream HesaiDriver.
   std::unique_ptr<nebula::drivers::HesaiDriver> driver_;
-  std::unique_ptr<AcceleratedHesaiDriver> accelerated_driver_;
   std::deque<nebula::drivers::NebulaPointCloudPtr> ready_clouds_;
   /// Packets from the first scan of the stream, captured until the
   /// driver emits its first cloud. flush() replays them to reproduce

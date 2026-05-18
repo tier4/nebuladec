@@ -16,10 +16,6 @@ ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/decoder.cpp
-  src/accelerated_hesai_driver.cpp
-  src/accelerated_seyond_decoder.cpp
-  src/accelerated_velodyne_decoder.cpp
-  src/accelerated_velodyne_driver.cpp
   src/hesai_adapter.cpp
   src/seyond_adapter.cpp
   src/velodyne_adapter.cpp

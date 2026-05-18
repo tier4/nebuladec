@@ -81,13 +81,9 @@ scopes:
 
 - `decoder_feed_total`, `decoder_feed_sniff` (in `Decoder::feed`)
 - `<vendor>_adapter_feed_total` and the wrapped upstream driver call
-  (`accelerated_<vendor>_*_unpack` / `<vendor>_decoder_unpack`) per
+  (`hesai_driver_parse_cloud_packet`,
+  `velodyne_driver_parse_cloud_packet`, `seyond_decoder_unpack`) per
   adapter
-- For Hesai, three additional scopes inside
-  `AcceleratedHesaiDecoder::unpack`:
-  `accelerated_hesai_angle_correct`,
-  `accelerated_hesai_scan_cutter_step`, and
-  `accelerated_hesai_convert_returns`
 
 ament does not propagate `target_compile_definitions PUBLIC` across
 packages, so `nebuladec_adapters` independently honours the same
