@@ -55,11 +55,11 @@ TEST(HesaiAdapter, ReadyForPandarXT32)
   EXPECT_TRUE(adapter.is_ready());
 }
 
-// The remaining models route through `AcceleratedHesaiDriver` after the
-// template was extended to cover every `HesaiSensor<PacketT>` family member.
-// Each test verifies that the per-model bundled calibration loads cleanly and
-// that `AcceleratedHesaiDecoder<SensorT>` instantiates against the real
-// configuration --- a smoke check that exercises the template's compatibility
+// The remaining models route through the upstream `HesaiDriver`, which
+// in turn instantiates `HesaiDecoder<SensorT>` for the model's concrete
+// sensor type. Each test verifies that the per-model bundled calibration
+// loads cleanly and that the decoder instantiates against the real
+// configuration --- a smoke check that exercises template compatibility
 // with every concrete SensorT.
 
 TEST(HesaiAdapter, ReadyForPandar64)

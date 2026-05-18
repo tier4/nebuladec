@@ -14,8 +14,6 @@
 
 #include "nebuladec_adapters/velodyne_adapter.hpp"
 
-#include "nebuladec_adapters/accelerated_velodyne_driver.hpp"
-
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <nebula_core_common/nebula_common.hpp>
 #include <nebula_core_common/nebula_status.hpp>
@@ -24,8 +22,6 @@
 #include <nebuladec_core/profiling.hpp>
 
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -46,16 +42,6 @@ using nebula::drivers::SensorModel;
 using nebula::drivers::VelodyneCalibrationConfiguration;
 using nebula::drivers::VelodyneDriver;
 using nebula::drivers::VelodyneSensorConfiguration;
-
-// NEBULADEC_ACCELERATED_VELODYNE opt-out: defaults to enabled. Set to "0" to
-// force the upstream nebula::drivers::VelodyneDriver. Useful for A/B
-// timing comparisons and for falling back if a future change to the
-// accelerated decoders regresses output identity.
-bool accelerated_velodyne_opted_out() noexcept
-{
-  const char * raw = std::getenv("NEBULADEC_ACCELERATED_VELODYNE");
-  return raw != nullptr && std::strcmp(raw, "0") == 0;
-}
 
 std::optional<std::string> model_to_file_stem(SensorModel model)
 {
@@ -141,14 +127,9 @@ VelodyneAdapter::VelodyneAdapter(const Identity & identity) : identity_(identity
   auto config = make_offline_config(identity.model, identity.return_mode);
 
   try {
-    if (AcceleratedVelodyneDriver::supports(identity.model) && !accelerated_velodyne_opted_out()) {
-      accelerated_driver_ = std::make_unique<AcceleratedVelodyneDriver>(config, calibration);
-    } else {
-      driver_ = std::make_unique<VelodyneDriver>(config, calibration);
-    }
+    driver_ = std::make_unique<VelodyneDriver>(config, calibration);
   } catch (const std::exception &) {
     driver_.reset();
-    accelerated_driver_.reset();
   }
 }
 
@@ -158,7 +139,7 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::feed(
   const std::vector<std::uint8_t> & packet, double stamp_sec)
 {
   NEBULADEC_PROFILE_SCOPE("velodyne_adapter_feed_total");
-  if ((!driver_ && !accelerated_driver_) || packet.empty()) {
+  if (!driver_ || packet.empty()) {
     return std::nullopt;
   }
 
@@ -167,10 +148,6 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::feed(
   }
 
   auto result = [&] {
-    if (accelerated_driver_) {
-      NEBULADEC_PROFILE_SCOPE("accelerated_velodyne_driver_parse_cloud_packet");
-      return accelerated_driver_->parse_cloud_packet(packet, stamp_sec);
-    }
     NEBULADEC_PROFILE_SCOPE("velodyne_driver_parse_cloud_packet");
     return driver_->parse_cloud_packet(packet, stamp_sec);
   }();
@@ -197,12 +174,11 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::flush()
   // the original wrap transition (they are known to have triggered one,
   // which is why we stopped capturing) and lets the driver emit the
   // trailing cloud.
-  if ((!driver_ && !accelerated_driver_) || first_scan_packets_.empty()) {
+  if (!driver_ || first_scan_packets_.empty()) {
     return std::nullopt;
   }
   for (const auto & [pkt, stamp] : first_scan_packets_) {
-    auto result = accelerated_driver_ ? accelerated_driver_->parse_cloud_packet(pkt, stamp)
-                                      : driver_->parse_cloud_packet(pkt, stamp);
+    auto result = driver_->parse_cloud_packet(pkt, stamp);
     auto & cloud = std::get<0>(result);
     if (cloud && !cloud->empty()) {
       return cloud;

@@ -32,8 +32,6 @@ class VelodyneDriver;
 namespace nebuladec::adapters
 {
 
-class AcceleratedVelodyneDriver;
-
 /// @brief Adapter that wraps Nebula's VelodyneDriver.
 ///
 /// Loads per-model calibration YAML shipped by the upstream
@@ -47,10 +45,7 @@ public:
   VelodyneAdapter(const VelodyneAdapter &) = delete;
   VelodyneAdapter & operator=(const VelodyneAdapter &) = delete;
 
-  [[nodiscard]] bool is_ready() const
-  {
-    return driver_ != nullptr || accelerated_driver_ != nullptr;
-  }
+  [[nodiscard]] bool is_ready() const { return driver_ != nullptr; }
 
   std::optional<nebula::drivers::NebulaPointCloudPtr> feed(
     const std::vector<std::uint8_t> & packet, double stamp_sec) override;
@@ -64,11 +59,7 @@ public:
 
 private:
   Identity identity_;
-  // Exactly one is non-null after a successful construction.
-  // `accelerated_driver_` wins when AcceleratedVelodyneDriver::supports(model) is true
-  // and NEBULADEC_ACCELERATED_VELODYNE != "0"; otherwise upstream VelodyneDriver.
   std::unique_ptr<nebula::drivers::VelodyneDriver> driver_;
-  std::unique_ptr<AcceleratedVelodyneDriver> accelerated_driver_;
   /// Packets from the first full scan of the stream, captured until the
   /// driver emits its first cloud. Replaying them during flush()
   /// reproduces the original azimuth-wrap transition (cf. Hesai).
