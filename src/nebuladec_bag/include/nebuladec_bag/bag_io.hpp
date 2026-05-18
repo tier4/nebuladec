@@ -64,6 +64,9 @@ struct TopicInspectResult
   /// Whether the topic had at least one message in the bag. False means
   /// no sniffing was attempted; `identity` will be empty.
   bool has_messages{false};
+  /// Number of ROS 2 messages on this topic, taken from bag metadata
+  /// (no full scan required). 0 when the topic is declared but silent.
+  std::size_t message_count{0};
 };
 
 /// @brief Summary of an `inspect()` run across all packet topics.
@@ -98,7 +101,10 @@ struct TopicConvertResult
   std::string out_topic;
   std::string frame_id;
   std::optional<Identity> identity;
-  std::size_t data_packets{0};
+  /// Number of ROS 2 packet messages (e.g. PandarScan, VelodyneScan,
+  /// nebula_msgs::NebulaPackets) read from the input topic. NOT the
+  /// number of individual sensor packets inside those messages.
+  std::size_t packets{0};
   std::size_t clouds_written{0};
 };
 
@@ -130,6 +136,10 @@ struct ConvertPlanEntry
   std::string out_topic;
   std::string frame_id;
   std::optional<Identity> identity;
+  /// Number of ROS 2 packet messages on this input topic, from bag
+  /// metadata. Mirrors `TopicConvertResult::packets` so the dry-run
+  /// table can show what convert() would consume.
+  std::size_t packets{0};
   std::string status;
   std::string message;
 };

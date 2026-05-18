@@ -173,7 +173,7 @@ struct TopicState
   Vendor vendor_hint{Vendor::UNKNOWN};
   std::unique_ptr<PacketSource> packet_source;
   Decoder decoder;
-  std::size_t data_packets{0};
+  std::size_t packets{0};
   std::size_t clouds_produced{0};
   /// Tracks the last-seen identity so callers can inspect Continental
   /// radar / Robosense topics even though make_adapter returns nullptr
@@ -189,8 +189,6 @@ void feed_packet(
   TopicState & state, const PacketBytes & pkt,
   const std::function<void(nebula::drivers::NebulaPointCloudPtr, std::int64_t)> & cloud_sink)
 {
-  ++state.data_packets;
-
   // Keep sniffing for model information until we have a concrete
   // identity. Once resolved, the decoder short-circuits.
   if (
@@ -233,7 +231,7 @@ void feed_packet(
 /// entry would only add noise.
 InspectSummary build_summary(
   const std::vector<PacketTopicSpec> & packet_order, const TopicStateMap & topic_states,
-  const std::unordered_set<std::string> & topics_with_messages)
+  const std::unordered_map<std::string, std::size_t> & message_count_by_topic)
 {
   InspectSummary summary;
   summary.topics.reserve(packet_order.size());
@@ -244,7 +242,9 @@ InspectSummary build_summary(
   for (const auto & pt : packet_order) {
     TopicInspectResult result;
     result.topic = pt.topic;
-    result.has_messages = topics_with_messages.count(pt.topic) > 0;
+    const auto count_it = message_count_by_topic.find(pt.topic);
+    result.message_count = count_it != message_count_by_topic.end() ? count_it->second : 0U;
+    result.has_messages = result.message_count > 0;
     if (auto it = topic_states.find(pt.topic); it != topic_states.end()) {
       result.identity = it->second.sniffed_identity;
     }
@@ -380,8 +380,7 @@ Sqlite3PacketIndex build_packet_index_from_rows(const std::vector<Sqlite3TopicRo
 /// sniffing any early packet is sufficient.
 void sniff_first_messages_sqlite3(
   sqlite3 * db, const std::vector<int> & target_ids,
-  const std::unordered_map<int, std::string> & topic_id_to_name, TopicStateMap & topic_states,
-  std::unordered_set<std::string> & topics_with_messages)
+  const std::unordered_map<int, std::string> & topic_id_to_name, TopicStateMap & topic_states)
 {
   std::string q =
     "SELECT data, topic_id FROM messages WHERE id IN ("
@@ -414,7 +413,6 @@ void sniff_first_messages_sqlite3(
     if (name_it == topic_id_to_name.end()) {
       continue;
     }
-    topics_with_messages.insert(name_it->second);
 
     const auto blob_bytes = static_cast<std::size_t>(blob_size);
     // Wrap the raw CDR-serialized bytes in a rclcpp::SerializedMessage
@@ -434,6 +432,47 @@ void sniff_first_messages_sqlite3(
       feed_packet(ts_it->second, pkt, nullptr);
     }
   }
+}
+
+/// Per-topic message count from the bare `.db3`. Runs a single grouped
+/// COUNT(*) over the integer-keyed `topic_id` column so it stays cheap
+/// even on large bags.
+std::unordered_map<std::string, std::size_t> count_messages_per_topic_sqlite3(
+  sqlite3 * db, const std::vector<int> & target_ids,
+  const std::unordered_map<int, std::string> & topic_id_to_name)
+{
+  std::unordered_map<std::string, std::size_t> counts;
+  counts.reserve(target_ids.size());
+  if (target_ids.empty()) {
+    return counts;
+  }
+  std::string q = "SELECT topic_id, COUNT(*) FROM messages WHERE topic_id IN (";
+  for (std::size_t i = 0; i < target_ids.size(); ++i) {
+    q += (i == 0) ? "?" : ",?";
+  }
+  q += ") GROUP BY topic_id";
+
+  SqliteStmtGuard sg;
+  if (sqlite3_prepare_v2(db, q.c_str(), -1, &sg.stmt, nullptr) != SQLITE_OK) {
+    throw std::runtime_error(
+      std::string{"failed to prepare per-topic count query: "} + sqlite3_errmsg(db));
+  }
+  for (std::size_t i = 0; i < target_ids.size(); ++i) {
+    sqlite3_bind_int(sg.stmt, static_cast<int>(i + 1), target_ids[i]);
+  }
+  while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+    const int topic_id = sqlite3_column_int(sg.stmt, 0);
+    const sqlite3_int64 count = sqlite3_column_int64(sg.stmt, 1);
+    if (count < 0) {
+      continue;
+    }
+    auto name_it = topic_id_to_name.find(topic_id);
+    if (name_it == topic_id_to_name.end()) {
+      continue;
+    }
+    counts.emplace(name_it->second, static_cast<std::size_t>(count));
+  }
+  return counts;
 }
 
 /// Inspect a bare `.db3` file without going through `rosbag2_cpp::Reader`.
@@ -468,12 +507,12 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
     return {};
   }
 
-  std::unordered_set<std::string> topics_with_messages;
-  sniff_first_messages_sqlite3(
-    db_guard.db, idx.target_ids, idx.topic_id_to_name, idx.topic_states, topics_with_messages);
+  sniff_first_messages_sqlite3(db_guard.db, idx.target_ids, idx.topic_id_to_name, idx.topic_states);
+  const auto message_counts =
+    count_messages_per_topic_sqlite3(db_guard.db, idx.target_ids, idx.topic_id_to_name);
 
   refresh_sniffed_identities(idx.topic_states);
-  return build_summary(idx.packet_order, idx.topic_states, topics_with_messages);
+  return build_summary(idx.packet_order, idx.topic_states, message_counts);
 }
 
 }  // namespace
@@ -585,13 +624,7 @@ InspectSummary inspect(const std::string & input_path)
 
   refresh_sniffed_identities(topic_states);
 
-  std::unordered_set<std::string> topics_with_messages;
-  for (const auto & [name, count] : message_counts) {
-    if (count > 0) {
-      topics_with_messages.insert(name);
-    }
-  }
-  return build_summary(discovered.packet_topics, topic_states, topics_with_messages);
+  return build_summary(discovered.packet_topics, topic_states, message_counts);
 }
 
 namespace
@@ -650,6 +683,7 @@ std::vector<ConvertPlanEntry> plan_convert(
     ConvertPlanEntry entry;
     entry.in_topic = t.topic;
     entry.identity = t.identity;
+    entry.packets = t.message_count;
 
     // Order matters: data-level reasons ("no messages", "unsupported
     // vendor/model") short-circuit before mapping resolution because a
@@ -907,7 +941,7 @@ ConvertResult build_convert_result(
     tr.out_topic = r.match.out_topic;
     tr.frame_id = r.match.frame_id;
     tr.identity = state.sniffed_identity ? state.sniffed_identity : state.decoder.identity();
-    tr.data_packets = state.data_packets;
+    tr.packets = state.packets;
     tr.clouds_written = state.clouds_produced;
     result.topics.push_back(std::move(tr));
   }
@@ -1048,6 +1082,7 @@ ConvertResult convert_via_definition_writer(
         rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
         auto packets = it->second.packet_source->extract(serialized);
         const std::string & in_topic = it->first;
+        ++it->second.packets;
         for (const auto & pkt : packets) {
           last_stamp_by_in[in_topic] = pkt.stamp_ns;
           feed_packet(
@@ -1189,6 +1224,7 @@ ConvertResult convert(const ConvertOptions & options)
         rclcpp::SerializedMessage serialized(*bag_msg->serialized_data);
         auto packets = it->second.packet_source->extract(serialized);
         const std::string & in_topic = it->first;
+        ++it->second.packets;
         for (const auto & pkt : packets) {
           routing.last_stamp_by_in[in_topic] = pkt.stamp_ns;
           feed_packet(

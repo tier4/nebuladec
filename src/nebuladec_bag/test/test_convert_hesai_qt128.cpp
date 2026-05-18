@@ -88,7 +88,7 @@ TEST(ConvertHesaiQT128, GroundTruthBagProducesClouds)
   EXPECT_EQ(t.identity->model, nebula::drivers::SensorModel::HESAI_PANDARQT128);
   EXPECT_EQ(t.in_topic, "/pandar_packets");
   EXPECT_EQ(t.out_topic, "/pandar_points");
-  EXPECT_GT(t.data_packets, 0U);
+  EXPECT_GT(t.packets, 0U);
   // Regression #1: with the pre-fix adapter, ready_clouds_ held
   // shared_ptrs to the decoder's frame buffer, which was cleared
   // immediately after the callback. Every cloud looked empty
