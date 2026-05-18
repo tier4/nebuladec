@@ -41,26 +41,6 @@ constexpr int k_exit_ok = 0;
 constexpr int k_exit_usage = 64;
 constexpr int k_exit_runtime = 70;
 
-std::string format_identity(const std::optional<nebuladec::Identity> & id)
-{
-  if (!id) {
-    return "<unknown>";
-  }
-  std::ostringstream os;
-  os << nebuladec::to_string(id->vendor) << "/";
-  // Seyond carries its model in a separate enum (seyond_model) because
-  // SensorModel::UNKNOWN stays set even after the sniffer identifies a
-  // Seyond model. Fall through to that enum when the main one is blank.
-  if (id->model != nebula::drivers::SensorModel::UNKNOWN) {
-    os << id->model;  // nebula_common.hpp overloads operator<< on ostream
-  } else if (id->seyond_model) {
-    os << *id->seyond_model;
-  } else {
-    os << "unknown-model";
-  }
-  return os.str();
-}
-
 std::string identity_vendor(const std::optional<nebuladec::Identity> & id)
 {
   return id ? nebuladec::to_string(id->vendor) : "<unknown>";
@@ -137,7 +117,9 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
     return k_exit_ok;
   }
   tabulate::Table table;
-  table.add_row({"in_topic", "vendor", "model", "out_topic", "frame_id", "decodable"});
+  // Column order mirrors the post-convert table so users can compare
+  // dry-run plans against actual conversions at a glance.
+  table.add_row({"input", "output", "frame_id", "vendor", "model", "packets"});
   std::size_t ok_count = 0;
   std::size_t skipped_count = 0;
   std::size_t error_count = 0;
@@ -147,20 +129,7 @@ int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
     const std::string model_cell = no_messages ? std::string{"-"} : identity_model(e.identity);
     const std::string out = e.status == "ok" ? e.out_topic : std::string{"-"};
     const std::string frame = e.status == "ok" ? e.frame_id : std::string{"-"};
-    // "decodable" collapses the three internal status values into a
-    // yes/no answer for the user, with the original reason appended when
-    // the answer is no. The resolved/skipped/errors summary line below
-    // preserves the finer split for debugging ambiguous configs.
-    std::string decodable_cell;
-    if (e.status == "ok") {
-      decodable_cell = "yes";
-    } else {
-      decodable_cell = "no";
-      if (!e.message.empty()) {
-        decodable_cell += ": " + e.message;
-      }
-    }
-    table.add_row({e.in_topic, vendor_cell, model_cell, out, frame, decodable_cell});
+    table.add_row({e.in_topic, out, frame, vendor_cell, model_cell, std::to_string(e.packets)});
     if (e.status == "ok") {
       ++ok_count;
     } else if (e.status == "skipped") {
@@ -202,25 +171,17 @@ int run_convert(const ConvertCliOptions & opts)
     options.mapping = std::move(mapping);
     const auto result = nebuladec::bag::convert(options);
 
-    if (!result.passthrough_topics.empty()) {
-      std::cerr << "preserved " << result.passthrough_topics.size()
-                << " topic(s) verbatim via passthrough:\n";
-      for (const auto & t : result.passthrough_topics) {
-        std::cerr << "  " << t << "\n";
-      }
-    }
-
     if (result.topics.empty()) {
       std::cerr << "no packet topic was decoded; output bag contains passthrough data only\n";
       // Passthrough-only output is still a valid result, not a failure.
     }
 
     tabulate::Table table;
-    table.add_row({"in_topic", "out_topic", "frame_id", "identity", "data_pkts", "clouds"});
+    table.add_row({"input", "output", "frame_id", "vendor", "model", "packets", "clouds"});
     for (const auto & t : result.topics) {
       table.add_row(
-        {t.in_topic, t.out_topic, t.frame_id, format_identity(t.identity),
-         std::to_string(t.data_packets), std::to_string(t.clouds_written)});
+        {t.in_topic, t.out_topic, t.frame_id, identity_vendor(t.identity),
+         identity_model(t.identity), std::to_string(t.packets), std::to_string(t.clouds_written)});
     }
     table[0].format().font_style({tabulate::FontStyle::bold});
     std::cout << table << "\n";

@@ -82,7 +82,7 @@ TEST(ConvertVelodyneVLP16, GroundTruthBagEmitsTrailingScan)
   EXPECT_EQ(t.identity->model, nebula::drivers::SensorModel::VELODYNE_VLP16);
   EXPECT_EQ(t.in_topic, "/velodyne_packets");
   EXPECT_EQ(t.out_topic, "/velodyne_points");
-  EXPECT_GT(t.data_packets, 0U);
+  EXPECT_GT(t.packets, 0U);
   // The ground-truth bag carries 4 VelodyneScan messages (~3 full scans
   // at 10 Hz). Without flush(), the scan-decoder's trailing buffer sits
   // in `scan_pc_` and the final scan is lost. Expect at least 2 clouds
