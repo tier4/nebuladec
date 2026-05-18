@@ -24,13 +24,12 @@
 #include <optional>
 #include <vector>
 
-namespace nebula::drivers
-{
-class SeyondDecoder;
-}
-
 namespace nebuladec::adapters
 {
+
+// Forward-declared private wrapper that lives under src/. See
+// src/nebuladec_adapters/src/seyond_decoder.hpp for details.
+class SeyondDecoder;
 
 /// @brief Adapter that wraps Nebula's SeyondDecoder.
 ///
@@ -58,7 +57,7 @@ public:
 
 private:
   Identity identity_;
-  std::unique_ptr<nebula::drivers::SeyondDecoder> decoder_;
+  std::unique_ptr<SeyondDecoder> decoder_;
   std::deque<nebula::drivers::NebulaPointCloudPtr> ready_clouds_;
   /// Packets from the first scan of the stream, captured until the
   /// decoder fires its first callback. Replayed by flush() so the
@@ -72,6 +71,11 @@ private:
   /// recover -- otherwise a clean end-of-bag would leak a duplicate of
   /// the first scan through the is_last_sub_frame path.
   bool last_feed_scan_complete_{false};
+  /// True when the resolved sub-model is RobinW. Nebula upstream applies
+  /// a hardcoded 180-degree X-axis rotation only for RobinW; we cancel
+  /// that rotation in the callback so this adapter emits clouds in the
+  /// same sensor body frame as every other Seyond sub-model.
+  bool is_robin_w_{false};
 };
 
 }  // namespace nebuladec::adapters
