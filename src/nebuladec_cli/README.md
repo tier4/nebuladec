@@ -49,7 +49,7 @@ See [`nebuladec_bag/README.md`](../nebuladec_bag/README.md#performance-3-stage-p
 
 ### Progress bar
 
-`nebuladec convert` renders one overall progress bar while it decodes. The bar shows percent complete, the elapsed time, the estimated remaining time, and a `<done> / <total> messages` postfix. The total counts only the bag-metadata message count of the input topics that will actually be decoded (passthrough traffic is excluded).
+`nebuladec convert` renders one overall progress bar while it decodes. The bar shows percent complete, the elapsed wall-clock time at **millisecond precision** (e.g. `1.827s`), and a `<done> / <total> messages` postfix. The total counts only the bag-metadata message count of the input topics that will actually be decoded (passthrough traffic is excluded).
 
 - Shown by default when stdout is a TTY **and** the bag carries at least one decoded LiDAR topic.
 - Automatically hidden when stdout is not a TTY (CI logs, pipes, `tee` to a file).
