@@ -1048,110 +1048,92 @@ WorkerPolicy resolve_worker_policy(const ConvertOptions & options, std::size_t K
   return out;
 }
 
-/// One decoded cloud bound for a particular topic's output queue.
-struct DecodedCloudItem
-{
-  nebula::drivers::NebulaPointCloudPtr cloud;
-  std::int64_t stamp_ns{0};
-};
-
 // Type aliases to keep nested template expressions readable (and to
 // dodge a cppcheck parser quirk that mis-tokenises chained `>>>`).
 using BagMsgPtr = std::shared_ptr<const rosbag2_storage::SerializedBagMessage>;
 using InputQueue = BoundedQueue<BagMsgPtr>;
-using OutputQueue = BoundedQueue<DecodedCloudItem>;
 
-/// One pass-through bag message bound for the writer.
-struct PassthroughItem
+/// One write request emitted to the shared writer queue. The variant
+/// is encoded with `kind` rather than `std::variant` so the existing
+/// codebase (C++17, no <variant> dependency) stays untouched.
+struct WriteItem
 {
-  BagMsgPtr msg;
-  std::int64_t log_time_ns{0};
+  enum class Kind : std::uint8_t { Cloud, Passthrough };
+  Kind kind{Kind::Passthrough};
+
+  // Cloud fields (populated when kind == Cloud).
+  std::string out_topic;
+  std::string frame_id;
+  nebula::drivers::NebulaPointCloudPtr cloud;
+
+  // Passthrough fields (populated when kind == Passthrough).
+  BagMsgPtr passthrough_msg;
+
+  std::int64_t stamp_ns{0};  ///< cloud stamp or passthrough log_time
 };
+
+using WriteQueue = BoundedQueue<WriteItem>;
 
 /// Per-decoded-topic resources for the parallel pipeline. Each slot
 /// owns a `TopicState` (Decoder + PacketSource + counters) plus the
-/// queues and watermark that connect the reader, worker, and writer
-/// stages for that topic.
+/// input queue that feeds packets to its worker.
 struct DecodedTopicSlot
 {
   std::string in_topic;
   std::string out_topic;
   std::string frame_id;
   TopicState state;
-  // Heap-allocated because BoundedQueue / Watermark are non-movable
-  // (they hold a mutex / atomic). Keeping them behind unique_ptr lets
-  // the enclosing slot move freely inside the owning vector.
+  // Heap-allocated because BoundedQueue is non-movable (holds a
+  // mutex). Keeping it behind unique_ptr lets the enclosing slot move
+  // freely inside the owning vector.
   std::unique_ptr<InputQueue> in_queue;
-  std::unique_ptr<OutputQueue> out_queue;
-  std::unique_ptr<Watermark> out_watermark;
-  std::int64_t last_pkt_stamp_ns{0};  ///< for `Decoder::flush()` stamp
+  std::int64_t last_pkt_stamp_ns{0};  ///< stamp for `Decoder::flush()`
 };
 
 /// Drives `N` topic slots on a single worker thread, draining their
-/// input queues round-robin (small batch per slot to keep fairness)
-/// and pushing decoded clouds to each slot's output queue.
-///
-/// When all assigned input queues are empty + closed (reader EOF), the
-/// worker calls `Decoder::flush()` on every slot's Decoder so the
-/// trailing scan participates in the merge with the correct stamp,
-/// then closes the output queues and their watermarks.
+/// input queues sequentially and pushing decoded clouds to the shared
+/// `WriteQueue`. When a slot's input queue is closed + drained the
+/// worker calls `Decoder::flush()` so the trailing scan still reaches
+/// the writer.
 class ParallelWorker
 {
 public:
-  ParallelWorker(std::vector<DecodedTopicSlot *> slots, AbortFlag & abort)
-  : slots_(std::move(slots)), abort_(abort)
+  ParallelWorker(std::vector<DecodedTopicSlot *> slots, WriteQueue & write_queue, AbortFlag & abort)
+  : slots_(std::move(slots)), write_queue_(write_queue), abort_(abort)
   {
   }
 
   void run()
   {
     try {
-      while (!abort_.aborted()) {
-        bool any_progress = false;
-        bool all_done = true;
-        for (auto * slot : slots_) {
-          if (slot->in_queue->empty_and_closed()) {
-            continue;
-          }
-          all_done = false;
-          for (int batch = 0; batch < k_batch_size; ++batch) {
-            std::shared_ptr<const rosbag2_storage::SerializedBagMessage> msg;
-            if (!slot->in_queue->try_pop(msg)) {
-              break;
-            }
-            process_msg(*slot, *msg);
-            any_progress = true;
-          }
-        }
-        if (all_done) {
-          break;
-        }
-        if (!any_progress) {
-          // Every slot was empty; back off briefly so we do not spin.
-          abort_.wait_for(std::chrono::milliseconds(10));
-        }
-      }
+      // Process each assigned slot to completion. Slots assigned to
+      // the same worker are independent topics, so finishing one
+      // before starting the next does not stall the writer (the
+      // shared write queue absorbs decoded clouds in arrival order).
       for (auto * slot : slots_) {
+        BagMsgPtr msg;
+        while (slot->in_queue->pop(msg)) {
+          process_msg(*slot, *msg);
+          if (abort_.aborted()) {
+            return;
+          }
+        }
+        if (abort_.aborted()) {
+          return;
+        }
         flush_slot(*slot);
       }
     } catch (...) {
       abort_.set(std::current_exception());
     }
-    // Close output queues unconditionally so the merger reaches EOF
-    // even on the error path.
-    for (auto * slot : slots_) {
-      slot->out_queue->close();
-      slot->out_watermark->close();
-    }
   }
 
 private:
-  static constexpr int k_batch_size = 8;
   std::vector<DecodedTopicSlot *> slots_;
+  WriteQueue & write_queue_;
   AbortFlag & abort_;
 
-  static void process_msg(
-    DecodedTopicSlot & slot, const rosbag2_storage::SerializedBagMessage & msg)
+  void process_msg(DecodedTopicSlot & slot, const rosbag2_storage::SerializedBagMessage & msg)
   {
     if (!slot.state.packet_source) {
       return;
@@ -1163,33 +1145,39 @@ private:
       slot.last_pkt_stamp_ns = pkt.stamp_ns;
       feed_packet(
         slot.state, pkt, [&](nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t cloud_stamp) {
-          // Deep-copy the cloud before crossing the worker→writer
-          // thread boundary. Some upstream nebula drivers (e.g. the
-          // Velodyne scan decoder) re-use the cloud's point buffer
-          // across consecutive scans: the emitted shared_ptr aliases
-          // a buffer the driver will mutate on the next `feed()`.
-          // The sequential path was insulated from this because it
-          // wrote the cloud immediately; the parallel path keeps the
-          // cloud queued for the merger, so we must own a snapshot.
-          auto cloud_snapshot = std::make_shared<nebula::drivers::NebulaPointCloud>(*cloud);
-          slot.out_queue->push(DecodedCloudItem{std::move(cloud_snapshot), cloud_stamp});
+          push_cloud(slot, std::move(cloud), cloud_stamp);
         });
     }
   }
 
-  static void flush_slot(DecodedTopicSlot & slot)
+  void flush_slot(DecodedTopicSlot & slot)
   {
     auto trailing = slot.state.decoder.flush();
     if (!trailing || !*trailing) {
       return;
     }
     ++slot.state.clouds_produced;
-    // Snapshot the trailing scan as well -- same rationale as in
-    // `process_msg`. The flush cloud's buffer can be torn down when
-    // the decoder is destroyed at function exit, but a snapshot keeps
-    // the merger insulated.
-    auto cloud_snapshot = std::make_shared<nebula::drivers::NebulaPointCloud>(**trailing);
-    slot.out_queue->push(DecodedCloudItem{std::move(cloud_snapshot), slot.last_pkt_stamp_ns});
+    push_cloud(slot, *trailing, slot.last_pkt_stamp_ns);
+  }
+
+  void push_cloud(
+    DecodedTopicSlot & slot, nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t cloud_stamp)
+  {
+    // Deep-copy the cloud before crossing the worker->writer thread
+    // boundary. Some upstream nebula drivers (e.g. the Velodyne scan
+    // decoder) re-use the cloud's point buffer across consecutive
+    // scans, so the shared_ptr aliases storage that the driver will
+    // mutate on the next `feed()`. The sequential path was insulated
+    // because it wrote the cloud immediately; we queue it, so a
+    // snapshot is required.
+    auto cloud_snapshot = std::make_shared<nebula::drivers::NebulaPointCloud>(*cloud);
+    WriteItem item;
+    item.kind = WriteItem::Kind::Cloud;
+    item.out_topic = slot.out_topic;
+    item.frame_id = slot.frame_id;
+    item.cloud = std::move(cloud_snapshot);
+    item.stamp_ns = cloud_stamp;
+    write_queue_.push(std::move(item));
   }
 };
 
@@ -1221,8 +1209,6 @@ std::vector<std::unique_ptr<DecodedTopicSlot>> make_decoded_slots(
     slot->state.packet_source = make_packet_source(r.type);
     slot->state.decoder.set_vendor_hint(vendor_hint);
     slot->in_queue = std::make_unique<InputQueue>(k_default_input_queue_capacity, abort);
-    slot->out_queue = std::make_unique<OutputQueue>(k_default_output_queue_capacity, abort);
-    slot->out_watermark = std::make_unique<Watermark>(abort);
 
     writer.create_topic(r.match.out_topic, "sensor_msgs/msg/PointCloud2", "cdr");
     slot_by_topic.emplace(r.in_topic, slot.get());
@@ -1231,62 +1217,25 @@ std::vector<std::unique_ptr<DecodedTopicSlot>> make_decoded_slots(
   return slots;
 }
 
-/// Build `OutputSource` adapters for `k_way_merge_drive`. One source
-/// per decoded slot plus one trailing source for the passthrough
-/// queue. Each source's callbacks hold raw pointers / references into
-/// caller-owned state (slots vector, passthrough queue + watermark,
-/// writer), all of which must outlive the merger run.
-std::vector<OutputSource> build_pipeline_sources(
-  const std::vector<std::unique_ptr<DecodedTopicSlot>> & slots,
-  BoundedQueue<PassthroughItem> & passthrough_queue, Watermark & passthrough_watermark,
-  OutputWriter & writer)
-{
-  std::vector<OutputSource> sources;
-  sources.reserve(slots.size() + 1);
-  for (const auto & slot_ptr : slots) {
-    auto * slot = slot_ptr.get();
-    OutputSource src;
-    src.peek = [slot](std::int64_t & out_stamp) -> bool {
-      DecodedCloudItem item;
-      if (slot->out_queue->peek(item)) {
-        out_stamp = item.stamp_ns;
-        return true;
-      }
-      return false;
-    };
-    src.is_eof = [slot] { return slot->out_queue->empty_and_closed(); };
-    src.watermark = [slot] { return slot->out_watermark->load(); };
-    src.consume_head = [slot, &writer] {
-      DecodedCloudItem item;
-      if (slot->out_queue->try_pop(item)) {
-        writer.write_cloud(slot->out_topic, slot->frame_id, *item.cloud, item.stamp_ns);
-      }
-    };
-    sources.push_back(std::move(src));
-  }
-  OutputSource pt_src;
-  pt_src.peek = [&passthrough_queue](std::int64_t & out_stamp) -> bool {
-    PassthroughItem item;
-    if (passthrough_queue.peek(item)) {
-      out_stamp = item.log_time_ns;
-      return true;
-    }
-    return false;
-  };
-  pt_src.is_eof = [&passthrough_queue] { return passthrough_queue.empty_and_closed(); };
-  pt_src.watermark = [&passthrough_watermark] { return passthrough_watermark.load(); };
-  pt_src.consume_head = [&passthrough_queue, &writer] {
-    PassthroughItem item;
-    if (passthrough_queue.try_pop(item)) {
-      writer.write_passthrough(item.msg, item.log_time_ns);
-    }
-  };
-  sources.push_back(std::move(pt_src));
-  return sources;
-}
-
-/// Parallel driver: Reader → per-topic Worker pool → K-way merge
-/// Writer. The writer stage runs on the calling thread.
+/// Parallel driver: Reader -> per-topic Worker pool -> shared
+/// WriteQueue -> Writer (on the calling thread).
+///
+/// Producers (reader + workers) all push to one shared `WriteQueue`,
+/// which the writer drains FIFO. The graph is a strict producer ->
+/// consumer DAG: no producer ever waits on another producer, only on
+/// the writer's drainage. That removes the bootstrap deadlock the
+/// previous K-way-merge design exhibited (the merger held the
+/// passthrough head until every decoded topic's "watermark" advanced
+/// past `INT64_MIN`; on a bag that opens with a burst of passthrough
+/// messages, the reader filled the passthrough queue before any
+/// decoded packet arrived, so no decoded watermark ever moved and
+/// the entire pipeline parked in futex_wait).
+///
+/// The output multiset matches the sequential path (see
+/// `test_convert_parallel_equivalence`); strict log-time ordering of
+/// the file's insertion order is not asserted -- nor was it in the
+/// sequential path, which writes a decoded cloud at the point in the
+/// stream where its scan-completing packet arrives.
 ///
 /// `workers` is the resolved worker-pool size (already clamped to a
 /// divisor of `K = decoded_rules.size()` by `resolve_worker_policy`),
@@ -1303,9 +1252,8 @@ ConvertResult run_convert_parallel(
   std::unordered_map<std::string, DecodedTopicSlot *> slot_by_topic;
   auto slots = make_decoded_slots(decoded_rules, abort, writer, slot_by_topic);
 
-  // 2. Pass-through queue + watermark, plus topic registration.
-  BoundedQueue<PassthroughItem> passthrough_queue(k_default_output_queue_capacity, abort);
-  Watermark passthrough_watermark(abort);
+  // 2. Register passthrough topics on the writer (main thread only,
+  // before any worker starts).
   std::unordered_set<std::string> passthrough_by_name;
   std::vector<std::string> passthrough_ordered;
   passthrough_ordered.reserve(all_topic_metadata.size());
@@ -1331,10 +1279,36 @@ ConvertResult run_convert_parallel(
     }
   }
 
-  // 4. Build OutputSource adapters for k_way_merge_drive.
-  auto sources = build_pipeline_sources(slots, passthrough_queue, passthrough_watermark, writer);
+  // 4. Shared writer queue. Sized to absorb writer lag without
+  // unbounded memory growth; capacity is in items, not bytes.
+  WriteQueue write_queue(k_default_output_queue_capacity, abort);
 
-  // 5. Launch reader and worker threads.
+  // Producer tracking: the writer's queue must close when every
+  // producer (reader + each spawned worker) has exited. Initialised
+  // to 1 (reader) and bumped once per spawned worker below.
+  std::atomic<std::size_t> active_producers{1};
+
+  // 5. Launch worker threads.
+  std::vector<std::thread> worker_threads;
+  worker_threads.reserve(workers);
+  for (std::size_t w = 0; w < workers; ++w) {
+    if (worker_assignments[w].empty()) {
+      continue;
+    }
+    active_producers.fetch_add(1, std::memory_order_acq_rel);
+    worker_threads.emplace_back(
+      [slots_for_worker = worker_assignments[w], &write_queue, &abort, &active_producers] {
+        ParallelWorker pw(slots_for_worker, write_queue, abort);
+        pw.run();
+        if (active_producers.fetch_sub(1, std::memory_order_acq_rel) == 1U) {
+          write_queue.close();
+        }
+      });
+  }
+
+  // 6. Launch the reader. It pushes decoded-topic messages into the
+  // matching slot's in_queue and passthrough messages directly into
+  // the shared write queue.
   std::thread reader_thread([&] {
     try {
       while (!abort.aborted() && reader.has_next()) {
@@ -1344,22 +1318,17 @@ ConvertResult run_convert_parallel(
         }
         const auto log_time_ns = bag_message_log_time_ns(*bag_msg);
         // Copy the topic name out of `bag_msg` before any std::move
-        // hand-off. The reference into bag_msg would technically stay
-        // valid (the underlying SerializedBagMessage is still alive,
-        // just owned by the queue's shared_ptr), but the explicit copy
-        // keeps the move-then-reference relationship obvious to
-        // future maintainers.
+        // hand-off so the lookup string is stable after move.
         const std::string topic_name{bag_msg->topic_name};
         if (auto it = slot_by_topic.find(topic_name); it != slot_by_topic.end()) {
-          it->second->out_watermark->advance(log_time_ns);
-          std::shared_ptr<const rosbag2_storage::SerializedBagMessage> shared_msg(
-            std::move(bag_msg));
+          BagMsgPtr shared_msg(std::move(bag_msg));
           it->second->in_queue->push(std::move(shared_msg));
         } else if (passthrough_by_name.count(topic_name) != 0U) {
-          passthrough_watermark.advance(log_time_ns);
-          std::shared_ptr<const rosbag2_storage::SerializedBagMessage> shared_msg(
-            std::move(bag_msg));
-          passthrough_queue.push(PassthroughItem{std::move(shared_msg), log_time_ns});
+          WriteItem item;
+          item.kind = WriteItem::Kind::Passthrough;
+          item.passthrough_msg = BagMsgPtr(std::move(bag_msg));
+          item.stamp_ns = log_time_ns;
+          write_queue.push(std::move(item));
         }
         // Topics matching no rule are silently skipped (same as the
         // sequential path).
@@ -1371,30 +1340,34 @@ ConvertResult run_convert_parallel(
     for (auto & slot : slots) {
       slot->in_queue->close();
     }
-    passthrough_queue.close();
-    passthrough_watermark.close();
+    if (active_producers.fetch_sub(1, std::memory_order_acq_rel) == 1U) {
+      write_queue.close();
+    }
   });
 
-  std::vector<std::thread> worker_threads;
-  worker_threads.reserve(workers);
-  for (std::size_t w = 0; w < workers; ++w) {
-    if (worker_assignments[w].empty()) {
-      continue;
-    }
-    worker_threads.emplace_back([slots_for_worker = worker_assignments[w], &abort] {
-      ParallelWorker pw(slots_for_worker, abort);
-      pw.run();
-    });
-  }
-
-  // 6. Drive the K-way merge on the main thread.
+  // 7. Writer loop on the main thread. Drains the shared queue until
+  // every producer has exited and the queue is closed + drained.
   try {
-    k_way_merge_drive(sources, abort);
+    WriteItem item;
+    while (write_queue.pop(item)) {
+      if (item.kind == WriteItem::Kind::Cloud) {
+        // `TopicState::clouds_produced` is incremented inside
+        // `feed_packet` / `flush_slot` on the worker thread; the
+        // writer thread just emits the cloud here. This matches the
+        // sequential path's accounting (clouds_produced counted at
+        // emit time, not at write time).
+        if (item.cloud && !item.cloud->empty()) {
+          writer.write_cloud(item.out_topic, item.frame_id, *item.cloud, item.stamp_ns);
+        }
+      } else {
+        writer.write_passthrough(item.passthrough_msg, item.stamp_ns);
+      }
+    }
   } catch (...) {
     abort.set(std::current_exception());
   }
 
-  // 7. Join all background threads. RAII-safe even on exception.
+  // 8. Join all background threads. RAII-safe even on exception.
   if (reader_thread.joinable()) {
     reader_thread.join();
   }
@@ -1404,12 +1377,12 @@ ConvertResult run_convert_parallel(
     }
   }
 
-  // 8. Rethrow the first captured exception if anything went wrong.
+  // 9. Rethrow the first captured exception if anything went wrong.
   if (auto ep = abort.take()) {
     std::rethrow_exception(ep);
   }
 
-  // 9. Assemble the result from the per-slot TopicStates.
+  // 10. Assemble the result from the per-slot TopicStates.
   TopicStateMap final_states;
   for (auto & slot : slots) {
     final_states.emplace(slot->in_topic, std::move(slot->state));

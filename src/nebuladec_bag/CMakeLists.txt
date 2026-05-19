@@ -55,14 +55,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_point_cloud2 test/test_point_cloud2.cpp)
   target_link_libraries(test_point_cloud2 ${PROJECT_NAME})
 
-  # Bag-agnostic unit tests for the K-way merge driver
-  # (`k_way_merge_drive`), `BoundedQueue<T>`, `Watermark`, and
-  # `AbortFlag`. Exercises four scenarios: single source ordering,
-  # two-source interleave, watermark unblocking, and abort-while-waiting.
-  ament_add_gtest(test_convert_parallel_kway_merge
-    test/test_convert_parallel_kway_merge.cpp)
-  target_link_libraries(test_convert_parallel_kway_merge ${PROJECT_NAME})
-
   # Covers MessageDefinitionSource for both mcap (Schema records) and
   # sqlite3 (metadata.yaml's Iron+ `message_definition` block, plus the
   # Humble soft-fail-to-empty case). The test builds its MCAP fixtures
