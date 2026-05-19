@@ -27,10 +27,12 @@
 
 #include <unistd.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -150,11 +152,14 @@ public:
       std::make_unique<indicators::BlockProgressBar>(
         indicators::option::BarWidth{40}, indicators::option::Start{"["},
         indicators::option::End{"]"}, indicators::option::PrefixText{"Decoding "},
-        indicators::option::ShowElapsedTime{true}, indicators::option::ShowRemainingTime{true},
         indicators::option::ForegroundColor{indicators::Color::cyan},
         indicators::option::FontStyles{
-          std::vector<indicators::FontStyle>{indicators::FontStyle::bold}}))
+          std::vector<indicators::FontStyle>{indicators::FontStyle::bold}})),
+    start_(std::chrono::steady_clock::now())
   {
+    // indicators' built-in ShowElapsedTime / ShowRemainingTime render
+    // mm:ss only; we want millisecond precision so we drive the elapsed
+    // string ourselves via PostfixText below.
     indicators::show_console_cursor(false);
   }
 
@@ -186,14 +191,27 @@ public:
     }
     const auto pct =
       (100.0 * static_cast<double>(ev.messages_done)) / static_cast<double>(ev.messages_total);
+
+    // Format elapsed time at millisecond precision (e.g. "12.345s").
+    // The bag library throttles `on_progress` to ~50 ms, so the bar
+    // can update visibly faster than 1 s — millisecond digits make
+    // short conversions readable instead of stuck on "00s".
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - start_)
+                              .count();
+    const auto whole_s = elapsed_ms / 1000;
+    const auto frac_ms = elapsed_ms % 1000;
+
     std::ostringstream postfix;
-    postfix << ev.messages_done << " / " << ev.messages_total << " messages";
+    postfix << whole_s << '.' << std::setw(3) << std::setfill('0') << frac_ms << "s | "
+            << ev.messages_done << " / " << ev.messages_total << " messages";
     bar_->set_option(indicators::option::PostfixText{postfix.str()});
     bar_->set_progress(static_cast<float>(pct));
   }
 
 private:
   std::unique_ptr<indicators::BlockProgressBar> bar_;
+  std::chrono::steady_clock::time_point start_;
 };
 
 int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
