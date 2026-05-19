@@ -14,7 +14,7 @@ workspace adds a thin layer that makes those drivers easy to use in a
 - Passes everything else (TF, IMU, cameras, unsupported LiDARs, etc.) through verbatim.
 - Lets a YAML mapping rewrite input topics into output topic names and `frame_id` values.
 - Supports a dry-run mode that prints the plan without writing any bag.
-- Runs as a 3-stage pipeline by default (reader → decoder worker pool → K-way merge writer) for concurrent decoding of multiple LiDAR topics; auto-falls-back to a single-threaded path on hosts with fewer than 3 hardware threads. See [`src/nebuladec_bag/README.md`](src/nebuladec_bag/README.md#performance-3-stage-pipeline-for-convert) for the architecture and [`src/nebuladec_cli/README.md`](src/nebuladec_cli/README.md#performance-parallel-pipeline) for the `--workers` / `--sequential` CLI flags.
+- Runs as a 3-stage pipeline by default (reader → decoder worker pool → shared FIFO write queue → writer) for concurrent decoding of multiple LiDAR topics; auto-falls-back to a single-threaded path on hosts with fewer than 3 hardware threads. See [`src/nebuladec_bag/README.md`](src/nebuladec_bag/README.md#performance-3-stage-pipeline-for-convert) for the architecture and [`src/nebuladec_cli/README.md`](src/nebuladec_cli/README.md#performance-parallel-pipeline) for the `--workers` / `--sequential` CLI flags.
 
 ## Supported sensors
 

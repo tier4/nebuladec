@@ -100,36 +100,41 @@ storage), decode sits idle.
 ### After — 3-stage pipeline (default)
 
 ```text
-                       ┌─ Worker A (topic /lidar_front) ──► cloud queue A ─┐
-[Input bag]            │                                                   │
-    │                  ├─ Worker B (topic /lidar_left)  ──► cloud queue B ─┤
-    ▼                  │                                                   │      ┌──────────┐
-[Reader thread] ───────┼─ Worker C (topic /lidar_right) ──► cloud queue C ─┼─────►│  Writer  │
- (single I/O ingest)   │                                                   │      │  thread  │
-                       └──── pass-through ────────────────► PT queue ──────┘      │ (K-way   │
-                          (TF, IMU, camera, ...)                                  │  merge,  │
-                                                                                  │ log_time)│
-                                                                                  └────┬─────┘
-                                                                                       ▼
+                       ┌─ Worker A (topic /lidar_front) ──► decoded clouds ┐
+[Input bag]            │                                                    │
+    │                  ├─ Worker B (topic /lidar_left)  ──► decoded clouds ┤      ┌──────────┐
+    ▼                  │                                                    ├─────►│  Writer  │
+[Reader thread] ───────┼─ Worker C (topic /lidar_right) ──► decoded clouds ┤      │  thread  │
+ (single I/O ingest)   │                                                    │      │  (FIFO   │
+                       └──── pass-through (TF, IMU, camera, ...) ──────────┘      │  drain)  │
+                                                                                   └────┬─────┘
+                                                                                        ▼
                                                                                   [Output bag]
                        ◄──── all stages run concurrently ────►
+              (all four arrows feed one shared bounded write queue)
 ```
 
 Each stage runs on its own thread:
 
 - **1 reader thread** pulls messages from the input bag in `log_time`
   order. Decoded-topic packets are routed into per-topic worker queues;
-  pass-through messages skip the workers and go straight to the writer.
+  pass-through messages skip the workers and go straight onto the
+  shared write queue.
 - **N worker threads** (`--workers N`, default `min(cores, K)`) decode
   LiDAR topics concurrently. Each worker holds its own `Decoder` per
   assigned topic and feeds packets in monotonic order, satisfying the
   per-instance threading contract of `nebuladec_adapters`. When
   `workers < K`, each worker handles **K / workers topics** evenly
   (the worker count is snapped down to the largest divisor of K so
-  the split is exact).
-- **1 writer thread** merges every queue in `log_time` order and writes
-  to the output bag. The merge uses per-source watermarks so an idle
-  topic does not stall progress on the others.
+  the split is exact). Decoded clouds are pushed onto the same shared
+  write queue the reader writes pass-through to.
+- **1 writer thread** drains the shared bounded queue FIFO. The reader
+  and workers are decoupled producers, so a temporarily idle topic
+  never holds back the others — the writer only ever waits on disk
+  I/O, not on a cross-topic ordering invariant. The output bag holds
+  the same multiset of `(topic, log_time, payload)` records as the
+  legacy single-threaded path; `ros2 bag play` (which is `log_time`
+  -driven) treats both bags identically.
 
 ### Why this is faster
 

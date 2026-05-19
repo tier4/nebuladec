@@ -15,8 +15,8 @@
 // End-to-end equivalence test for the parallel pipeline. Runs
 // `bag::convert()` twice on the same input bag -- once with
 // `options.sequential = true` (legacy single-threaded path) and once
-// with the default pipeline (Reader → Worker pool → K-way merge
-// Writer) -- and asserts that:
+// with the default pipeline (Reader -> Worker pool -> shared FIFO
+// write queue -> Writer) -- and asserts that:
 //
 //   * `ConvertResult` counts (packets, clouds_written, passthrough
 //     list) match exactly.
