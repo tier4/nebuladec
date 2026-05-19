@@ -37,8 +37,46 @@ constexpr const char * g_log_name = "nebuladec_bag";
 
 }  // namespace
 
+namespace
+{
+mcap::Compression to_mcap_compression(McapCompression c, mcap::Compression fallback)
+{
+  switch (c) {
+    case McapCompression::kNone:
+      return mcap::Compression::None;
+    case McapCompression::kLz4:
+      return mcap::Compression::Lz4;
+    case McapCompression::kZstd:
+      return mcap::Compression::Zstd;
+    case McapCompression::kAuto:
+      break;
+  }
+  return fallback;
+}
+
+mcap::CompressionLevel to_mcap_level(McapCompressionLevel l, mcap::CompressionLevel fallback)
+{
+  switch (l) {
+    case McapCompressionLevel::kFastest:
+      return mcap::CompressionLevel::Fastest;
+    case McapCompressionLevel::kFast:
+      return mcap::CompressionLevel::Fast;
+    case McapCompressionLevel::kDefault:
+      return mcap::CompressionLevel::Default;
+    case McapCompressionLevel::kSlow:
+      return mcap::CompressionLevel::Slow;
+    case McapCompressionLevel::kSlowest:
+      return mcap::CompressionLevel::Slowest;
+    case McapCompressionLevel::kAuto:
+      break;
+  }
+  return fallback;
+}
+}  // namespace
+
 McapDefinitionWriter::McapDefinitionWriter(
-  const std::filesystem::path & output_path, const MessageDefinitionRegistry & registry)
+  const std::filesystem::path & output_path, const MessageDefinitionRegistry & registry,
+  const McapWriteOptions & mcap_opts)
 : output_path_(output_path), registry_(registry), writer_(std::make_unique<mcap::McapWriter>())
 {
   mcap::McapWriterOptions opts{"ros2"};
@@ -46,8 +84,12 @@ McapDefinitionWriter::McapDefinitionWriter(
   // behaviour: zstd-compressed chunks, summary section enabled, indexed
   // messages. Downstream tools (ros2 bag info, foxglove studio) only
   // open files that carry these by default.
-  opts.compression = mcap::Compression::Zstd;
-  opts.compressionLevel = mcap::CompressionLevel::Default;
+  opts.compression = to_mcap_compression(mcap_opts.compression, mcap::Compression::Zstd);
+  opts.compressionLevel =
+    to_mcap_level(mcap_opts.compression_level, mcap::CompressionLevel::Default);
+  if (mcap_opts.chunk_size_bytes != 0U) {
+    opts.chunkSize = mcap_opts.chunk_size_bytes;
+  }
   if (const auto status = writer_->open(output_path.string(), opts); !status.ok()) {
     throw std::runtime_error(
       "failed to open mcap writer for " + output_path.string() + ": " + status.message);

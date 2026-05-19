@@ -27,6 +27,8 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -124,7 +126,99 @@ struct ConvertCliOptions
   // bar is suppressed when this is true. Independent of --dry-run /
   // workers / sequential.
   bool no_progress{false};
+  // Raw flag values; parsed by `parse_mcap_*` below into the typed
+  // McapWriteOptions struct the library consumes. Empty = unset.
+  std::string mcap_compression_raw;
+  std::string mcap_chunk_size_raw;
 };
+
+/// Parse `--mcap-compression VALUE` where VALUE is one of:
+///   none
+///   lz4 | lz4:fastest|fast|default|slow|slowest
+///   zstd | zstd:fastest|fast|default|slow|slowest
+/// Sets both `compression` and `compression_level` fields. Throws
+/// `CLI::ValidationError` on a bad value so CLI11 turns it into an
+/// exit-64 usage error.
+void parse_mcap_compression(const std::string & raw, nebuladec::bag::McapWriteOptions & out)
+{
+  if (raw.empty()) {
+    return;
+  }
+  const auto colon = raw.find(':');
+  const std::string kind = raw.substr(0, colon);
+  const std::string level = colon == std::string::npos ? std::string{} : raw.substr(colon + 1);
+
+  if (kind == "none") {
+    if (!level.empty()) {
+      throw CLI::ValidationError("--mcap-compression: 'none' takes no level suffix");
+    }
+    out.compression = nebuladec::bag::McapCompression::kNone;
+    out.compression_level = nebuladec::bag::McapCompressionLevel::kAuto;
+    return;
+  }
+  if (kind == "lz4") {
+    out.compression = nebuladec::bag::McapCompression::kLz4;
+  } else if (kind == "zstd") {
+    out.compression = nebuladec::bag::McapCompression::kZstd;
+  } else {
+    throw CLI::ValidationError(
+      "--mcap-compression: expected 'none', 'lz4[:level]', or 'zstd[:level]' (got '" + raw + "')");
+  }
+
+  if (level.empty() || level == "default") {
+    out.compression_level = nebuladec::bag::McapCompressionLevel::kDefault;
+  } else if (level == "fastest") {
+    out.compression_level = nebuladec::bag::McapCompressionLevel::kFastest;
+  } else if (level == "fast") {
+    out.compression_level = nebuladec::bag::McapCompressionLevel::kFast;
+  } else if (level == "slow") {
+    out.compression_level = nebuladec::bag::McapCompressionLevel::kSlow;
+  } else if (level == "slowest") {
+    out.compression_level = nebuladec::bag::McapCompressionLevel::kSlowest;
+  } else {
+    throw CLI::ValidationError(
+      "--mcap-compression: expected level fastest|fast|default|slow|slowest (got '" + level + "')");
+  }
+}
+
+/// Parse `--mcap-chunk-size BYTES` where BYTES is a positive integer
+/// with an optional K/KB/M/MB/G/GB suffix (case-insensitive, binary
+/// SI: K=1024, M=1024*1024, G=1024*1024*1024). Throws
+/// `CLI::ValidationError` on bad input.
+std::uint64_t parse_chunk_size(const std::string & raw)
+{
+  if (raw.empty()) {
+    return 0;
+  }
+  std::size_t pos = 0;
+  std::uint64_t value = 0;
+  try {
+    value = std::stoull(raw, &pos);
+  } catch (const std::exception &) {
+    throw CLI::ValidationError("--mcap-chunk-size: not a number (got '" + raw + "')");
+  }
+  if (value == 0U) {
+    throw CLI::ValidationError("--mcap-chunk-size: must be positive (got '" + raw + "')");
+  }
+  std::string suffix = raw.substr(pos);
+  std::transform(suffix.begin(), suffix.end(), suffix.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  std::uint64_t multiplier = 1;
+  if (suffix.empty() || suffix == "b") {
+    multiplier = 1;
+  } else if (suffix == "k" || suffix == "kb" || suffix == "kib") {
+    multiplier = 1024ULL;
+  } else if (suffix == "m" || suffix == "mb" || suffix == "mib") {
+    multiplier = 1024ULL * 1024ULL;
+  } else if (suffix == "g" || suffix == "gb" || suffix == "gib") {
+    multiplier = 1024ULL * 1024ULL * 1024ULL;
+  } else {
+    throw CLI::ValidationError(
+      "--mcap-chunk-size: unknown suffix '" + suffix + "' (expected K/M/G or none)");
+  }
+  return value * multiplier;
+}
 
 /// RAII wrapper around the indicators overall-decode progress bar.
 ///
@@ -279,6 +373,10 @@ int run_convert(const ConvertCliOptions & opts)
     // the guard outlives convert() and cleans up the terminal even if
     // convert() throws.
     options.on_progress = ProgressBarGuard::make(opts.no_progress);
+    // MCAP writer tuning. Only honoured when the input bag is MCAP;
+    // the library warns and ignores them on sqlite3 input.
+    parse_mcap_compression(opts.mcap_compression_raw, options.mcap);
+    options.mcap.chunk_size_bytes = parse_chunk_size(opts.mcap_chunk_size_raw);
     const auto result = nebuladec::bag::convert(options);
 
     if (result.topics.empty()) {
@@ -358,6 +456,25 @@ int main(int argc, char ** argv)
     "TTY when the bag contains at least one decoded LiDAR topic, and "
     "automatically hidden when stdout is not a TTY (CI logs, pipes). "
     "Ignored under --dry-run.");
+
+  // MCAP writer tuning. Output mirrors the input storage plugin, so
+  // these flags only take effect when the input bag is MCAP; the
+  // library logs a warning and ignores them on sqlite3 input.
+  convert->add_option(
+    "--mcap-compression", opts.mcap_compression_raw,
+    "MCAP output compression. Format: 'none' | 'lz4[:LEVEL]' | "
+    "'zstd[:LEVEL]' where LEVEL is fastest|fast|default|slow|slowest. "
+    "Examples: --mcap-compression none, --mcap-compression zstd:fast, "
+    "--mcap-compression lz4. Default: writer plugin default (zstd / "
+    "default level). Ignored under --dry-run and when input is sqlite3.");
+  convert->add_option(
+    "--mcap-chunk-size", opts.mcap_chunk_size_raw,
+    "MCAP output chunk size in bytes. Accepts an integer with optional "
+    "K/M/G suffix (binary SI: K=1024). Examples: --mcap-chunk-size 4M, "
+    "--mcap-chunk-size 16777216. Larger chunks reduce the number of "
+    "compression invocations on writer-bound workloads at the cost of "
+    "extra memory per chunk. Default: writer plugin default (~768 KiB). "
+    "Ignored under --dry-run and when input is sqlite3.");
 
   // Flag matrix (mirrors prior hand-rolled behavior):
   //   --dry-run + no --config  -> inspect-style report

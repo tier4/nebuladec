@@ -101,6 +101,39 @@ struct ProgressEvent
   std::size_t messages_total{0};
 };
 
+/// @brief Output-side MCAP writer tuning.
+///
+/// `convert()` mirrors the input bag's storage plugin on the output
+/// side, so these options only take effect when the input bag is MCAP.
+/// When the input is sqlite3 (`.db3`) `convert()` emits a single
+/// warning and ignores the options -- this keeps the CLI's MCAP flags
+/// harmless against a mixed workflow.
+///
+/// `kAuto` means "do not override; let the writer use its own
+/// default". The library never enforces a specific value -- defaults
+/// match `rosbag2_storage_mcap` / libmcap out-of-the-box behaviour.
+enum class McapCompression : std::uint8_t { kAuto, kNone, kLz4, kZstd };
+enum class McapCompressionLevel : std::uint8_t {
+  kAuto,
+  kFastest,
+  kFast,
+  kDefault,
+  kSlow,
+  kSlowest,
+};
+
+struct McapWriteOptions
+{
+  McapCompression compression{McapCompression::kAuto};
+  McapCompressionLevel compression_level{McapCompressionLevel::kAuto};
+  /// 0 means "let the writer pick" (rosbag2_storage_mcap default ~=
+  /// libmcap's 768 KiB). Larger chunks (e.g. 4-64 MiB) reduce the
+  /// number of compression invocations the writer thread has to
+  /// perform and typically improve write throughput on writer-bound
+  /// workloads at the cost of a small memory footprint.
+  std::uint64_t chunk_size_bytes{0};
+};
+
 /// @brief Options accepted by `convert()`.
 ///
 /// The set of (in_topic -> out_topic, frame_id) pairs is driven entirely
@@ -136,6 +169,10 @@ struct ConvertOptions
   bool sequential{false};
   std::size_t workers{0};
   std::function<void(const ProgressEvent &)> on_progress{};
+  /// Output-side MCAP writer tuning. Honoured only when the input bag
+  /// (and therefore the output bag) is MCAP; ignored with a single
+  /// warning on sqlite3 input.
+  McapWriteOptions mcap{};
 };
 
 /// @brief Per-in-topic conversion statistics produced by `convert()`.

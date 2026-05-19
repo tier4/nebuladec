@@ -15,6 +15,7 @@
 #ifndef MCAP_DEFINITION_WRITER_HPP_
 #define MCAP_DEFINITION_WRITER_HPP_
 
+#include "nebuladec_bag/bag_io.hpp"
 #include "nebuladec_bag/message_definition.hpp"
 
 #include <cstddef>
@@ -57,8 +58,13 @@ class McapDefinitionWriter
 public:
   /// Open `output_path` for writing. Throws `std::runtime_error` when
   /// the file cannot be created or libmcap rejects the path.
+  ///
+  /// `mcap_opts` selects the on-disk compression / chunk size; any
+  /// `kAuto` field falls back to libmcap's defaults (zstd /
+  /// CompressionLevel::Default / 768 KiB chunks).
   McapDefinitionWriter(
-    const std::filesystem::path & output_path, const MessageDefinitionRegistry & registry);
+    const std::filesystem::path & output_path, const MessageDefinitionRegistry & registry,
+    const McapWriteOptions & mcap_opts = {});
   ~McapDefinitionWriter();
 
   McapDefinitionWriter(const McapDefinitionWriter &) = delete;
