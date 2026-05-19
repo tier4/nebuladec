@@ -120,7 +120,17 @@ nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --wo
 
 # Force the legacy single-threaded path (e.g. byte-for-byte regression comparison).
 nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --sequential
+
+# Suppress the live progress bar (e.g. CI logs, pipes -- auto-hidden on non-TTY too).
+nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --no-progress
+
+# MCAP writer tuning (input must be .mcap; ignored with a warning on .db3 input).
+# Loosen compression for ~1.5-2.3x faster wall-clock at +5-9% file size.
+nebuladec convert path/to/input.mcap -o path/to/output.mcap -c config/x2.yaml --mcap-compression zstd:fast
+nebuladec convert path/to/input.mcap -o path/to/output.mcap -c config/x2.yaml --mcap-compression none
 ```
+
+See [`nebuladec_cli/README.md`](src/nebuladec_cli/README.md#mcap-tuning) for the full `--mcap-compression` / `--mcap-chunk-size` matrix and a benchmark on a 2.5 GB Seyond bag.
 
 ### Mapping YAML
 
