@@ -34,19 +34,24 @@
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include <rcutils/logging_macros.h>
 #include <sqlite3.h>
+#include <unistd.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -1592,7 +1597,7 @@ ConvertResult convert_via_definition_writer(
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata,
   const fs::path & final_output_path, const MessageDefinitionRegistry & registry,
-  const WorkerPolicy & policy, ProgressReporter & reporter)
+  const WorkerPolicy & policy, ProgressReporter & reporter, const McapWriteOptions & mcap_opts)
 {
   if (fs::exists(final_output_path)) {
     throw std::runtime_error(
@@ -1601,13 +1606,126 @@ ConvertResult convert_via_definition_writer(
 
   ConvertResult result;
   {
-    McapDefinitionWriter mcap_writer{final_output_path, registry};
+    McapDefinitionWriter mcap_writer{final_output_path, registry, mcap_opts};
     McapDefinitionOutputWriter writer{mcap_writer};
     result = dispatch_to_driver(
       reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy, reporter);
   }  // mcap_writer destructor finalises the mcap file
   return result;
 }
+
+/// String form of `McapCompression` for the rosbag2 storage YAML and
+/// for log messages. Returns empty for `kAuto`.
+std::string mcap_compression_yaml_value(McapCompression c)
+{
+  switch (c) {
+    case McapCompression::kNone:
+      return "None";
+    case McapCompression::kLz4:
+      return "Lz4";
+    case McapCompression::kZstd:
+      return "Zstd";
+    case McapCompression::kAuto:
+      break;
+  }
+  return {};
+}
+
+std::string mcap_level_yaml_value(McapCompressionLevel l)
+{
+  switch (l) {
+    case McapCompressionLevel::kFastest:
+      return "Fastest";
+    case McapCompressionLevel::kFast:
+      return "Fast";
+    case McapCompressionLevel::kDefault:
+      return "Default";
+    case McapCompressionLevel::kSlow:
+      return "Slow";
+    case McapCompressionLevel::kSlowest:
+      return "Slowest";
+    case McapCompressionLevel::kAuto:
+      break;
+  }
+  return {};
+}
+
+/// True when at least one field of `o` overrides the writer default.
+bool mcap_opts_set(const McapWriteOptions & o)
+{
+  return o.compression != McapCompression::kAuto ||
+         o.compression_level != McapCompressionLevel::kAuto || o.chunk_size_bytes != 0U;
+}
+
+/// Apply the db3-input policy: if any MCAP option is set but the
+/// input is not MCAP, log a single warning and clear the options. The
+/// returned struct is what the rest of the pipeline should consult.
+McapWriteOptions resolve_mcap_opts(const std::string & input_storage_id, McapWriteOptions opts)
+{
+  if (input_storage_id == "mcap" || !mcap_opts_set(opts)) {
+    return opts;
+  }
+  RCUTILS_LOG_WARN_NAMED(
+    "nebuladec_bag",
+    "ignoring --mcap-compression / --mcap-chunk-size: input storage is '%s', not 'mcap' "
+    "(output mirrors input plugin, so MCAP writer options have no effect)",
+    input_storage_id.c_str());
+  return {};
+}
+
+/// RAII handle for a temp `rosbag2_storage_mcap` storage-config YAML
+/// file. Created under `/tmp` so the rosbag2_storage_mcap plugin can
+/// load it via `storage_config_uri`, deleted on destruction. The YAML
+/// only carries `compression`, `compressionLevel`, and `chunkSize`;
+/// everything else stays on the rosbag2_storage_mcap defaults.
+class StorageConfigFile
+{
+public:
+  explicit StorageConfigFile(const McapWriteOptions & opts)
+  {
+    if (!mcap_opts_set(opts)) {
+      return;  // path_ stays empty -> caller skips storage_config_uri
+    }
+    auto template_path = fs::temp_directory_path() / "nebuladec_mcap_opts_XXXXXX.yaml";
+    std::string buf = template_path.string();
+    const int fd = ::mkstemps(buf.data(), 5);  // 5 = strlen(".yaml")
+    if (fd < 0) {
+      throw std::runtime_error("failed to create temp mcap storage-config file");
+    }
+    ::close(fd);
+    path_ = buf;
+    std::ofstream out(path_);
+    const auto comp = mcap_compression_yaml_value(opts.compression);
+    const auto level = mcap_level_yaml_value(opts.compression_level);
+    if (!comp.empty()) {
+      out << "compression: " << comp << '\n';
+    }
+    if (!level.empty()) {
+      out << "compressionLevel: " << level << '\n';
+    }
+    if (opts.chunk_size_bytes != 0U) {
+      out << "chunkSize: " << opts.chunk_size_bytes << '\n';
+    }
+  }
+
+  ~StorageConfigFile()
+  {
+    if (!path_.empty()) {
+      std::error_code ec;
+      fs::remove(path_, ec);  // ignore: temp file, OS will clean /tmp eventually
+    }
+  }
+
+  StorageConfigFile(const StorageConfigFile &) = delete;
+  StorageConfigFile & operator=(const StorageConfigFile &) = delete;
+  StorageConfigFile(StorageConfigFile &&) = delete;
+  StorageConfigFile & operator=(StorageConfigFile &&) = delete;
+
+  [[nodiscard]] const std::string & path() const noexcept { return path_; }
+
+private:
+  std::string path_;  // empty => no overrides requested
+};
 
 }  // namespace
 
@@ -1671,12 +1789,17 @@ ConvertResult convert(const ConvertOptions & options)
   //   * registry must be non-empty -- otherwise the existing
   //     `rosbag2_cpp::Writer` path is byte-equivalent and we avoid
   //     touching well-tested code.
+  // Resolve MCAP write options. When the input is sqlite3 and the
+  // user passed --mcap-* flags, warn-and-ignore so a mixed workflow
+  // (db3 in / db3 out) does not silently use unrelated knobs.
+  const auto mcap_opts = resolve_mcap_opts(in_spec.storage_id, options.mcap);
+
   if (in_spec.storage_id == "mcap" && collapse_to_file) {
     auto registry = load_definition_registry(in_spec);
     if (!registry.empty()) {
       auto result = convert_via_definition_writer(
         reader, support.decoded, decoded_topic_names, all_topic_metadata, final_output_path,
-        registry, worker_policy, reporter);
+        registry, worker_policy, reporter, mcap_opts);
       reporter.finalize();
       return result;
     }
@@ -1690,13 +1813,19 @@ ConvertResult convert(const ConvertOptions & options)
 
   // Phase 3: open the writer, register output topics, run the
   // reader-loop (sequential or parallel per `worker_policy`), then
-  // flush trailing scans before the writer closes.
+  // flush trailing scans before the writer closes. When MCAP-specific
+  // options were requested we hand them to the rosbag2_storage_mcap
+  // plugin through a temp YAML pointed at by `storage_config_uri`.
   ConvertResult result;
   {
+    StorageConfigFile storage_cfg(mcap_opts);
     rosbag2_cpp::Writer rb2_writer;
     rosbag2_storage::StorageOptions out_opts;
     out_opts.uri = writer_uri.string();
     out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
+    if (!storage_cfg.path().empty()) {
+      out_opts.storage_config_uri = storage_cfg.path();
+    }
     rb2_writer.open(out_opts);
     Rosbag2OutputWriter writer{rb2_writer};
     result = dispatch_to_driver(

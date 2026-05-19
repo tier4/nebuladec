@@ -34,6 +34,16 @@ Supporting value types: `InputSpec`, `TopicInspectResult`, `InspectSummary`,
 
 The CLI uses this hook to drive an `indicators::BlockProgressBar`; see [`nebuladec_cli/README.md`](../nebuladec_cli/README.md#progress-bar) for the user-facing UX and the `--no-progress` flag.
 
+#### `ConvertOptions::mcap`
+
+`ConvertOptions::mcap` (of type `McapWriteOptions`) selects compression and chunk size for the output MCAP. Output mirrors the input storage plugin, so these fields are only honoured when the input bag is MCAP; on sqlite3 input the library logs a single WARN-level message via `RCUTILS_LOG_WARN_NAMED("nebuladec_bag", ...)` and treats the options as unset.
+
+- `compression`: `McapCompression::{kAuto, kNone, kLz4, kZstd}` (default `kAuto` = writer plugin default, which is `Zstd`).
+- `compression_level`: `McapCompressionLevel::{kAuto, kFastest, kFast, kDefault, kSlow, kSlowest}` (default `kAuto`). Ignored when `compression == kNone`.
+- `chunk_size_bytes`: `std::uint64_t`. `0` means "writer plugin default" (~768 KiB).
+
+Internally `convert()` writes a short-lived storage-config YAML under `/tmp` and points `rosbag2_storage::StorageOptions::storage_config_uri` at it for the `rosbag2_cpp::Writer` path. The bare-file MCAP path (used when the input bag carries embedded schemas) forwards the same options to `McapDefinitionWriter` which applies them directly to `mcap::McapWriterOptions`. See [`nebuladec_cli/README.md`](../nebuladec_cli/README.md#mcap-tuning) for the user-facing flags and a benchmark.
+
 ### `message_definition.hpp` — embedded schema forwarding
 
 Defines `MessageDefinition` (POD: `type_name`, `encoding`, `text`),

@@ -18,14 +18,17 @@ nebuladec convert <input> -o <output> -c <config.yaml>
                   [--dry-run] [-j <N> | --sequential]
 ```
 
-| Option            | Description                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `input`           | Path to the input ROS 2 bag (positional, required).                                  |
-| `-o, --output`    | Output bag path. Required unless `--dry-run` is set.                                 |
-| `-c, --config`    | YAML mapping config. Required for real conversion. Optional with `--dry-run`.        |
-| `--dry-run`       | Print a plan without writing any bag.                                                |
-| `-j, --workers N` | Decoder worker pool size for the parallel pipeline. `0` (default) = auto. See below. |
-| `--sequential`    | Force the legacy single-threaded code path. Mutually exclusive with `--workers`.     |
+| Option               | Description                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`              | Path to the input ROS 2 bag (positional, required).                                                                                               |
+| `-o, --output`       | Output bag path. Required unless `--dry-run` is set.                                                                                              |
+| `-c, --config`       | YAML mapping config. Required for real conversion. Optional with `--dry-run`.                                                                     |
+| `--dry-run`          | Print a plan without writing any bag.                                                                                                             |
+| `-j, --workers N`    | Decoder worker pool size for the parallel pipeline. `0` (default) = auto. See below.                                                              |
+| `--sequential`       | Force the legacy single-threaded code path. Mutually exclusive with `--workers`.                                                                  |
+| `--no-progress`      | Suppress the decode progress bar. Bar is auto-hidden on non-TTY stdout anyway.                                                                    |
+| `--mcap-compression` | MCAP output compression: `none` \| `lz4[:LEVEL]` \| `zstd[:LEVEL]` where LEVEL is `fastest`/`fast`/`default`/`slow`/`slowest`. See _MCAP tuning_. |
+| `--mcap-chunk-size`  | MCAP output chunk size in bytes; integer with optional `K`/`M`/`G` suffix (binary SI). See _MCAP tuning_.                                         |
 
 ### Behavior
 
@@ -46,6 +49,28 @@ nebuladec convert <input> -o <output> -c <config.yaml>
 - The pipeline auto-falls-back to the sequential path when `std::thread::hardware_concurrency() < 3` or when the bag has no decodable LiDAR topics.
 
 See [`nebuladec_bag/README.md`](../nebuladec_bag/README.md#performance-3-stage-pipeline-for-convert) for the architectural diagrams.
+
+### MCAP tuning
+
+`convert` mirrors the input bag's storage plugin on the output side, so these flags only take effect when the **input** bag is MCAP. On sqlite3 input the library emits a single warning and ignores them.
+
+- `--mcap-compression VALUE` — `none` | `lz4[:LEVEL]` | `zstd[:LEVEL]` (LEVEL is `fastest`/`fast`/`default`/`slow`/`slowest`). Default: writer plugin default (`zstd:default`).
+- `--mcap-chunk-size BYTES` — integer bytes, optional `K`/`M`/`G` suffix (binary SI: `K=1024`). Default: writer plugin default (~768 KiB).
+
+Choosing a value is a wall-clock vs file-size trade. Measured on a 2.5 GB Seyond bag (FalconK + RobinW, 600 messages) writing to a local NVMe (lower `real` is faster, output sizes shown for context):
+
+| `--mcap-compression`       | real (avg, 3 runs) | output size | vs default |
+| -------------------------- | ------------------ | ----------- | ---------- |
+| (default = `zstd:default`) | 7.04 s             | 4045 MB     | 1.00×      |
+| `zstd:fast`                | 4.69 s             | 4272 MB     | **1.50×**  |
+| `lz4:fastest`              | 4.95 s             | 4273 MB     | 1.42×      |
+| `none`                     | 3.08 s             | 4388 MB     | **2.29×**  |
+
+Notes:
+
+- LiDAR pointclouds compress poorly (output is mostly floats); the size delta between `none` and `zstd:default` is only ~8 % on this workload, so loosening compression buys speed cheaply.
+- Avoid bare `--mcap-compression lz4` — libmcap's lz4 _default_ level is anomalously slow (~9× slower than `zstd:default` in the same run). Use `lz4:fastest` instead.
+- `--mcap-chunk-size 16M` was a wash on this workload (writer-bound dominated by compression cost). Larger chunks can still help on slow remote storage where fewer write syscalls matter more.
 
 ### Progress bar
 
