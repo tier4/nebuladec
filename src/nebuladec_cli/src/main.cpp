@@ -22,12 +22,17 @@
 #include <nebuladec_core/packet_sniffer.hpp>
 #include <nebuladec_core/topic_mapping.hpp>
 #include <third_party/CLI11.hpp>
+#include <third_party/indicators.hpp>
 #include <third_party/tabulate.hpp>
+
+#include <unistd.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -113,6 +118,82 @@ struct ConvertCliOptions
   // with --sequential at the CLI level (CLI11 `excludes`).
   std::size_t workers{0};
   bool sequential{false};
+  // Forcefully disable the indicators progress bar. Even on a TTY the
+  // bar is suppressed when this is true. Independent of --dry-run /
+  // workers / sequential.
+  bool no_progress{false};
+};
+
+/// RAII wrapper around the indicators overall-decode progress bar.
+///
+/// Construction is conditional: when stdout is not a TTY, when the
+/// caller asked for `--no-progress`, or when the bag has nothing to
+/// decode, `make()` returns an empty callable so the bag library skips
+/// the entire progress path. When active, the destructor restores the
+/// console cursor and prints a trailing newline so the next line
+/// (result table / error) starts on a fresh row even if the user
+/// Ctrl-C'd mid-decode.
+class ProgressBarGuard
+{
+public:
+  static std::function<void(const nebuladec::bag::ProgressEvent &)> make(bool no_progress)
+  {
+    if (no_progress || isatty(fileno(stdout)) == 0) {
+      return {};
+    }
+    auto guard = std::make_shared<ProgressBarGuard>();
+    return [guard](const nebuladec::bag::ProgressEvent & ev) { guard->update(ev); };
+  }
+
+  ProgressBarGuard()
+  : bar_(
+      std::make_unique<indicators::BlockProgressBar>(
+        indicators::option::BarWidth{40}, indicators::option::Start{"["},
+        indicators::option::End{"]"}, indicators::option::PrefixText{"Decoding "},
+        indicators::option::ShowElapsedTime{true}, indicators::option::ShowRemainingTime{true},
+        indicators::option::ForegroundColor{indicators::Color::cyan},
+        indicators::option::FontStyles{
+          std::vector<indicators::FontStyle>{indicators::FontStyle::bold}}))
+  {
+    indicators::show_console_cursor(false);
+  }
+
+  ~ProgressBarGuard()
+  {
+    if (bar_ && !bar_->is_completed()) {
+      bar_->mark_as_completed();
+    }
+    indicators::show_console_cursor(true);
+    // The bar uses CR (\r) writes; landing on a fresh line keeps any
+    // subsequent stdout (result table) from overprinting the bar row.
+    std::cout << '\n';
+  }
+
+  ProgressBarGuard(const ProgressBarGuard &) = delete;
+  ProgressBarGuard & operator=(const ProgressBarGuard &) = delete;
+  ProgressBarGuard(ProgressBarGuard &&) = delete;
+  ProgressBarGuard & operator=(ProgressBarGuard &&) = delete;
+
+  void update(const nebuladec::bag::ProgressEvent & ev)
+  {
+    if (!bar_) {
+      return;
+    }
+    // total == 0 means "no decoded topics"; the bag library won't fire
+    // this callback in that case, but guard against future shifts.
+    if (ev.messages_total == 0U) {
+      return;
+    }
+    const auto pct =
+      (100.0 * static_cast<double>(ev.messages_done)) / static_cast<double>(ev.messages_total);
+    std::ostringstream postfix;
+    postfix << ev.messages_done << " / " << ev.messages_total << " messages";
+    bar_->set_option(indicators::option::PostfixText{postfix.str()});
+    bar_->set_progress(static_cast<float>(pct));
+  }
+
+private:
+  std::unique_ptr<indicators::BlockProgressBar> bar_;
 };
 
 int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
@@ -176,6 +257,10 @@ int run_convert(const ConvertCliOptions & opts)
     options.mapping = std::move(mapping);
     options.sequential = opts.sequential;
     options.workers = opts.workers;
+    // The progress callback keeps a shared_ptr to the bar guard, so
+    // the guard outlives convert() and cleans up the terminal even if
+    // convert() throws.
+    options.on_progress = ProgressBarGuard::make(opts.no_progress);
     const auto result = nebuladec::bag::convert(options);
 
     if (result.topics.empty()) {
@@ -248,6 +333,13 @@ int main(int argc, char ** argv)
     "comparison or on hosts with fewer than 3 hardware threads. "
     "Ignored under --dry-run.");
   workers_opt->excludes(sequential_flag);
+
+  convert->add_flag(
+    "--no-progress", opts.no_progress,
+    "Suppress the decode progress bar. The bar is shown by default on a "
+    "TTY when the bag contains at least one decoded LiDAR topic, and "
+    "automatically hidden when stdout is not a TTY (CI logs, pipes). "
+    "Ignored under --dry-run.");
 
   // Flag matrix (mirrors prior hand-rolled behavior):
   //   --dry-run + no --config  -> inspect-style report

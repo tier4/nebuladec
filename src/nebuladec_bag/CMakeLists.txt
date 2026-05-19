@@ -104,9 +104,29 @@ if(BUILD_TESTING)
     target_link_libraries(test_convert_parallel_equivalence ${PROJECT_NAME})
     target_compile_definitions(test_convert_parallel_equivalence PRIVATE
       "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
+
+    # ConvertOptions::on_progress contract test. Reuses the VLP16
+    # fixture across the sequential path and the default 3-stage
+    # pipeline, plus a throwing-callback case that exercises the
+    # ProgressReporter's exception swallowing.
+    ament_add_gtest(test_convert_progress test/test_convert_progress.cpp)
+    target_link_libraries(test_convert_progress ${PROJECT_NAME})
+    target_compile_definitions(test_convert_progress PRIVATE
+      "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
+
+    # Regression test for the `--workers < K` deadlock in the parallel
+    # pipeline. Synthesises a two-topic bag from the VLP16 fixture and
+    # runs convert() with workers=1 inside a future + wait_for(60s);
+    # the pre-fix code never returned for this configuration.
+    ament_add_gtest(test_convert_workers_one test/test_convert_workers_one.cpp)
+    target_link_libraries(test_convert_workers_one ${PROJECT_NAME})
+    target_compile_definitions(test_convert_workers_one PRIVATE
+      "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
   else()
     message(STATUS "Skipping test_convert_velodyne_vlp16: VLP16 ground-truth bag not found at ${_vlp16_bag}")
     message(STATUS "Skipping test_convert_parallel_equivalence: VLP16 ground-truth bag not found at ${_vlp16_bag}")
+    message(STATUS "Skipping test_convert_progress: VLP16 ground-truth bag not found at ${_vlp16_bag}")
+    message(STATUS "Skipping test_convert_workers_one: VLP16 ground-truth bag not found at ${_vlp16_bag}")
   endif()
 endif()
 

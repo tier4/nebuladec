@@ -1051,7 +1051,6 @@ WorkerPolicy resolve_worker_policy(const ConvertOptions & options, std::size_t K
 // Type aliases to keep nested template expressions readable (and to
 // dodge a cppcheck parser quirk that mis-tokenises chained `>>>`).
 using BagMsgPtr = std::shared_ptr<const rosbag2_storage::SerializedBagMessage>;
-using InputQueue = BoundedQueue<BagMsgPtr>;
 
 /// One write request emitted to the shared writer queue. The variant
 /// is encoded with `kind` rather than `std::variant` so the existing
@@ -1075,49 +1074,80 @@ struct WriteItem
 using WriteQueue = BoundedQueue<WriteItem>;
 
 /// Per-decoded-topic resources for the parallel pipeline. Each slot
-/// owns a `TopicState` (Decoder + PacketSource + counters) plus the
-/// input queue that feeds packets to its worker.
+/// owns a `TopicState` (Decoder + PacketSource + counters). The input
+/// queue lives one level up -- per worker, not per slot -- so that a
+/// worker assigned multiple slots drains them in reader arrival order
+/// without one slot's queue starving another (see `DecodeItem` and
+/// `run_convert_parallel` for the deadlock that motivated this).
 struct DecodedTopicSlot
 {
   std::string in_topic;
   std::string out_topic;
   std::string frame_id;
   TopicState state;
-  // Heap-allocated because BoundedQueue is non-movable (holds a
-  // mutex). Keeping it behind unique_ptr lets the enclosing slot move
-  // freely inside the owning vector.
-  std::unique_ptr<InputQueue> in_queue;
   std::int64_t last_pkt_stamp_ns{0};  ///< stamp for `Decoder::flush()`
 };
 
-/// Drives `N` topic slots on a single worker thread, draining their
-/// input queues sequentially and pushing decoded clouds to the shared
-/// `WriteQueue`. When a slot's input queue is closed + drained the
-/// worker calls `Decoder::flush()` so the trailing scan still reaches
-/// the writer.
+/// One reader-to-worker dispatch item. The reader looks up `slot` by
+/// topic name and pushes the pair into the worker queue that owns
+/// `slot`. Carrying the slot pointer alongside the message lets the
+/// worker drain its queue in strict arrival order (FIFO across all
+/// topics it is assigned) without having to peek a topic name back
+/// out of the serialised payload.
+struct DecodeItem
+{
+  DecodedTopicSlot * slot{nullptr};
+  BagMsgPtr msg;
+};
+
+using DecodeQueue = BoundedQueue<DecodeItem>;
+
+/// Drives `N` topic slots on a single worker thread, draining a single
+/// shared input queue in FIFO order and pushing decoded clouds to the
+/// shared `WriteQueue`. When the input queue is closed + drained the
+/// worker calls `Decoder::flush()` on each assigned slot so the
+/// trailing scan still reaches the writer.
+///
+/// The previous design owned one input queue per slot and processed
+/// them serially. With `workers < K` that deadlocked: as the reader
+/// pushed messages in log-time order, the unattended slot's queue
+/// filled to its `k_default_input_queue_capacity` cap and the reader
+/// blocked on `push()`. The worker could never observe the close on
+/// the slot it was draining because the reader was blocked, and so
+/// `pop()` waited forever -- classic producer/consumer deadlock.
+///
+/// The shared per-worker queue replaces both queues with one FIFO,
+/// dissolving the cross-slot back-pressure that triggered the hang.
 class ParallelWorker
 {
 public:
-  ParallelWorker(std::vector<DecodedTopicSlot *> slots, WriteQueue & write_queue, AbortFlag & abort)
-  : slots_(std::move(slots)), write_queue_(write_queue), abort_(abort)
+  ParallelWorker(
+    std::vector<DecodedTopicSlot *> slots, DecodeQueue & in_queue, WriteQueue & write_queue,
+    AbortFlag & abort)
+  : slots_(std::move(slots)), in_queue_(in_queue), write_queue_(write_queue), abort_(abort)
   {
   }
 
   void run()
   {
     try {
-      // Process each assigned slot to completion. Slots assigned to
-      // the same worker are independent topics, so finishing one
-      // before starting the next does not stall the writer (the
-      // shared write queue absorbs decoded clouds in arrival order).
-      for (auto * slot : slots_) {
-        BagMsgPtr msg;
-        while (slot->in_queue->pop(msg)) {
-          process_msg(*slot, *msg);
-          if (abort_.aborted()) {
-            return;
-          }
+      DecodeItem item;
+      while (in_queue_.pop(item)) {
+        if (item.slot != nullptr && item.msg) {
+          process_msg(*item.slot, *item.msg);
         }
+        if (abort_.aborted()) {
+          return;
+        }
+      }
+      if (abort_.aborted()) {
+        return;
+      }
+      // EOF on the input queue: flush every assigned slot's decoder so
+      // the trailing scan (mechanical LiDAR boundary case) still
+      // reaches the writer. Mirrors the sequential path's post-loop
+      // flush in `run_convert_sequential`.
+      for (auto * slot : slots_) {
         if (abort_.aborted()) {
           return;
         }
@@ -1130,6 +1160,7 @@ public:
 
 private:
   std::vector<DecodedTopicSlot *> slots_;
+  DecodeQueue & in_queue_;
   WriteQueue & write_queue_;
   AbortFlag & abort_;
 
@@ -1187,7 +1218,7 @@ private:
 /// without re-scanning the vector. Throws when two rules resolve to
 /// the same `out_topic` (caller-supplied mapping ambiguity).
 std::vector<std::unique_ptr<DecodedTopicSlot>> make_decoded_slots(
-  const std::vector<ResolvedRule> & decoded_rules, AbortFlag & abort, OutputWriter & writer,
+  const std::vector<ResolvedRule> & decoded_rules, OutputWriter & writer,
   std::unordered_map<std::string, DecodedTopicSlot *> & slot_by_topic)
 {
   std::vector<std::unique_ptr<DecodedTopicSlot>> slots;
@@ -1208,13 +1239,28 @@ std::vector<std::unique_ptr<DecodedTopicSlot>> make_decoded_slots(
     slot->state.vendor_hint = vendor_hint;
     slot->state.packet_source = make_packet_source(r.type);
     slot->state.decoder.set_vendor_hint(vendor_hint);
-    slot->in_queue = std::make_unique<InputQueue>(k_default_input_queue_capacity, abort);
 
     writer.create_topic(r.match.out_topic, "sensor_msgs/msg/PointCloud2", "cdr");
     slot_by_topic.emplace(r.in_topic, slot.get());
     slots.push_back(std::move(slot));
   }
   return slots;
+}
+
+/// Sum of bag-metadata message counts for the in_topics that will be
+/// decoded. Drives the `messages_total` field of `ProgressEvent`.
+/// Passthrough topics are deliberately excluded -- the progress bar
+/// reports decode work, not raw bag throughput.
+std::size_t sum_decoded_message_counts(
+  const rosbag2_cpp::Reader & reader, const std::unordered_set<std::string> & decoded_topic_names)
+{
+  std::size_t total = 0;
+  for (const auto & info : reader.get_metadata().topics_with_message_count) {
+    if (decoded_topic_names.count(info.topic_metadata.name) != 0U) {
+      total += info.message_count;
+    }
+  }
+  return total;
 }
 
 /// Parallel driver: Reader -> per-topic Worker pool -> shared
@@ -1244,13 +1290,13 @@ ConvertResult run_convert_parallel(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
-  std::size_t workers)
+  std::size_t workers, ProgressReporter & reporter)
 {
   AbortFlag abort;
 
   // 1. Create one slot per decoded topic + register its output topic.
   std::unordered_map<std::string, DecodedTopicSlot *> slot_by_topic;
-  auto slots = make_decoded_slots(decoded_rules, abort, writer, slot_by_topic);
+  auto slots = make_decoded_slots(decoded_rules, writer, slot_by_topic);
 
   // 2. Register passthrough topics on the writer (main thread only,
   // before any worker starts).
@@ -1279,7 +1325,31 @@ ConvertResult run_convert_parallel(
     }
   }
 
-  // 4. Shared writer queue. Sized to absorb writer lag without
+  // 4. Per-worker input queue: one DecodeQueue per worker, holding
+  // (slot*, msg) pairs in arrival order. This replaces the previous
+  // per-slot queues. With per-slot queues, a `workers < K` config
+  // deadlocked because the worker drained its first slot fully before
+  // touching the second, while the reader -- forced to push messages
+  // in bag log-time order -- filled the unattended slot's queue to its
+  // cap and blocked on `push()`. With one queue per worker, no slot
+  // can starve another and back-pressure flows through a single FIFO.
+  //
+  // Capacity is `k_default_input_queue_capacity` per worker (matches
+  // the per-slot budget in the workers == K case; modestly smaller
+  // when workers < K, but the previous budget was unreachable in that
+  // case anyway because draining was serial).
+  std::vector<std::unique_ptr<DecodeQueue>> worker_in_queues;
+  worker_in_queues.reserve(workers);
+  std::unordered_map<const DecodedTopicSlot *, std::size_t> worker_idx_by_slot;
+  for (std::size_t w = 0; w < workers; ++w) {
+    worker_in_queues.push_back(
+      std::make_unique<DecodeQueue>(k_default_input_queue_capacity, abort));
+    for (auto * slot : worker_assignments[w]) {
+      worker_idx_by_slot.emplace(slot, w);
+    }
+  }
+
+  // 5. Shared writer queue. Sized to absorb writer lag without
   // unbounded memory growth; capacity is in items, not bytes.
   WriteQueue write_queue(k_default_output_queue_capacity, abort);
 
@@ -1288,7 +1358,7 @@ ConvertResult run_convert_parallel(
   // to 1 (reader) and bumped once per spawned worker below.
   std::atomic<std::size_t> active_producers{1};
 
-  // 5. Launch worker threads.
+  // 6. Launch worker threads.
   std::vector<std::thread> worker_threads;
   worker_threads.reserve(workers);
   for (std::size_t w = 0; w < workers; ++w) {
@@ -1296,19 +1366,20 @@ ConvertResult run_convert_parallel(
       continue;
     }
     active_producers.fetch_add(1, std::memory_order_acq_rel);
-    worker_threads.emplace_back(
-      [slots_for_worker = worker_assignments[w], &write_queue, &abort, &active_producers] {
-        ParallelWorker pw(slots_for_worker, write_queue, abort);
-        pw.run();
-        if (active_producers.fetch_sub(1, std::memory_order_acq_rel) == 1U) {
-          write_queue.close();
-        }
-      });
+    worker_threads.emplace_back([slots_for_worker = worker_assignments[w],
+                                 in_queue = worker_in_queues[w].get(), &write_queue, &abort,
+                                 &active_producers] {
+      ParallelWorker pw(slots_for_worker, *in_queue, write_queue, abort);
+      pw.run();
+      if (active_producers.fetch_sub(1, std::memory_order_acq_rel) == 1U) {
+        write_queue.close();
+      }
+    });
   }
 
-  // 6. Launch the reader. It pushes decoded-topic messages into the
-  // matching slot's in_queue and passthrough messages directly into
-  // the shared write queue.
+  // 7. Launch the reader. It looks up each decoded-topic message's
+  // owning worker and pushes (slot*, msg) into that worker's input
+  // queue; passthrough messages go straight to the shared write queue.
   std::thread reader_thread([&] {
     try {
       while (!abort.aborted() && reader.has_next()) {
@@ -1321,8 +1392,15 @@ ConvertResult run_convert_parallel(
         // hand-off so the lookup string is stable after move.
         const std::string topic_name{bag_msg->topic_name};
         if (auto it = slot_by_topic.find(topic_name); it != slot_by_topic.end()) {
-          BagMsgPtr shared_msg(std::move(bag_msg));
-          it->second->in_queue->push(std::move(shared_msg));
+          DecodedTopicSlot * slot = it->second;
+          const auto w = worker_idx_by_slot.at(slot);
+          DecodeItem item;
+          item.slot = slot;
+          item.msg = BagMsgPtr(std::move(bag_msg));
+          worker_in_queues[w]->push(std::move(item));
+          // Reader-side progress tick: counts every decoded-topic
+          // message dispatched to a worker (matches sequential path).
+          reporter.advance();
         } else if (passthrough_by_name.count(topic_name) != 0U) {
           WriteItem item;
           item.kind = WriteItem::Kind::Passthrough;
@@ -1336,9 +1414,9 @@ ConvertResult run_convert_parallel(
     } catch (...) {
       abort.set(std::current_exception());
     }
-    // Close all input queues so workers reach EOF, even on error.
-    for (auto & slot : slots) {
-      slot->in_queue->close();
+    // Close every worker queue so workers reach EOF, even on error.
+    for (auto & q : worker_in_queues) {
+      q->close();
     }
     if (active_producers.fetch_sub(1, std::memory_order_acq_rel) == 1U) {
       write_queue.close();
@@ -1397,7 +1475,7 @@ ConvertResult dispatch_to_driver(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
-  const WorkerPolicy & policy);
+  const WorkerPolicy & policy, ProgressReporter & reporter);
 
 /// Shared sequential driver used by both the generic `rosbag2_cpp::Writer`
 /// path and the MCAP schema-forwarding fast path. The caller owns the
@@ -1413,7 +1491,8 @@ ConvertResult dispatch_to_driver(
 ConvertResult run_convert_sequential(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
-  const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer)
+  const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
+  ProgressReporter & reporter)
 {
   TopicStateMap states;
   auto routing = register_decoded_topics(writer, decoded_rules, states);
@@ -1440,6 +1519,7 @@ ConvertResult run_convert_sequential(
       auto packets = it->second.packet_source->extract(serialized);
       const std::string & in_topic = it->first;
       ++it->second.packets;
+      reporter.advance();
       for (const auto & pkt : packets) {
         routing.last_stamp_by_in[in_topic] = pkt.stamp_ns;
         feed_packet(
@@ -1479,14 +1559,15 @@ ConvertResult dispatch_to_driver(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
-  const WorkerPolicy & policy)
+  const WorkerPolicy & policy, ProgressReporter & reporter)
 {
   if (policy.sequential) {
     return run_convert_sequential(
-      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer);
+      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, reporter);
   }
   return run_convert_parallel(
-    reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy.workers);
+    reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy.workers,
+    reporter);
 }
 
 /// Bare-file MCAP convert path that bypasses `rosbag2_cpp::Writer` so
@@ -1498,7 +1579,7 @@ ConvertResult convert_via_definition_writer(
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata,
   const fs::path & final_output_path, const MessageDefinitionRegistry & registry,
-  const WorkerPolicy & policy)
+  const WorkerPolicy & policy, ProgressReporter & reporter)
 {
   if (fs::exists(final_output_path)) {
     throw std::runtime_error(
@@ -1510,7 +1591,7 @@ ConvertResult convert_via_definition_writer(
     McapDefinitionWriter mcap_writer{final_output_path, registry};
     McapDefinitionOutputWriter writer{mcap_writer};
     result = dispatch_to_driver(
-      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy);
+      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy, reporter);
   }  // mcap_writer destructor finalises the mcap file
   return result;
 }
@@ -1544,6 +1625,14 @@ ConvertResult convert(const ConvertOptions & options)
   }
   const auto all_topic_metadata = collect_topic_metadata(reader);
 
+  // ProgressReporter owns the throttling + callback dispatch for the
+  // duration of this convert() call. `messages_total` is fixed at
+  // construction from bag metadata; `on_progress` is the caller's
+  // optional sink. When `on_progress` is empty, every `advance()` /
+  // `finalize()` collapses to an early return.
+  ProgressReporter reporter{
+    options.on_progress, sum_decoded_message_counts(reader, decoded_topic_names)};
+
   // Resolve the execution policy (sequential vs 3-stage pipeline)
   // once we know how many decode-target topics the bag carries.
   // Default is pipeline; auto-falls-back to sequential when
@@ -1572,9 +1661,11 @@ ConvertResult convert(const ConvertOptions & options)
   if (in_spec.storage_id == "mcap" && collapse_to_file) {
     auto registry = load_definition_registry(in_spec);
     if (!registry.empty()) {
-      return convert_via_definition_writer(
+      auto result = convert_via_definition_writer(
         reader, support.decoded, decoded_topic_names, all_topic_metadata, final_output_path,
-        registry, worker_policy);
+        registry, worker_policy, reporter);
+      reporter.finalize();
+      return result;
     }
   }
 
@@ -1596,8 +1687,10 @@ ConvertResult convert(const ConvertOptions & options)
     rb2_writer.open(out_opts);
     Rosbag2OutputWriter writer{rb2_writer};
     result = dispatch_to_driver(
-      reader, support.decoded, decoded_topic_names, all_topic_metadata, writer, worker_policy);
+      reader, support.decoded, decoded_topic_names, all_topic_metadata, writer, worker_policy,
+      reporter);
   }  // rb2_writer scope ends here -- destructor flushes and closes files.
+  reporter.finalize();
 
   // Phase 4: collapse scratch -> bare file for bare-file inputs, then
   // return the result.

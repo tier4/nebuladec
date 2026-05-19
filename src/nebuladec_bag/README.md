@@ -20,7 +20,19 @@ Four free functions in the namespace `nebuladec::bag`:
 | `convert(options)`                  | The full pipeline: read → identify → decode → write `PointCloud2` → pass through everything else. Returns a `ConvertResult`.                                                                                                       |
 
 Supporting value types: `InputSpec`, `TopicInspectResult`, `InspectSummary`,
-`ConvertOptions`, `TopicConvertResult`, `ConvertResult`, `ConvertPlanEntry`.
+`ConvertOptions`, `TopicConvertResult`, `ConvertResult`, `ConvertPlanEntry`,
+`ProgressEvent`.
+
+#### `ConvertOptions::on_progress`
+
+`ConvertOptions` carries an optional `std::function<void(const ProgressEvent &)> on_progress` sink. When set, `convert()` invokes it from the reader stage to report cumulative decode progress across every decoded topic in the bag (passthrough traffic is excluded). `ProgressEvent::messages_total` is fixed at `convert()` entry from bag metadata; `messages_done` is monotonic.
+
+- Calls are throttled to at most one every ~50 ms.
+- A final call always fires after the writer scope closes, so the consumer always sees a snapshot with `messages_done == messages_total`.
+- Callback exceptions are swallowed — a broken UI cannot abort decoding.
+- Leave empty (default) to disable; the per-message branch collapses to a single function-pointer check.
+
+The CLI uses this hook to drive an `indicators::BlockProgressBar`; see [`nebuladec_cli/README.md`](../nebuladec_cli/README.md#progress-bar) for the user-facing UX and the `--no-progress` flag.
 
 ### `message_definition.hpp` — embedded schema forwarding
 
@@ -117,9 +129,14 @@ storage), decode sits idle.
 Each stage runs on its own thread:
 
 - **1 reader thread** pulls messages from the input bag in `log_time`
-  order. Decoded-topic packets are routed into per-topic worker queues;
-  pass-through messages skip the workers and go straight onto the
-  shared write queue.
+  order. Decoded-topic packets are routed into the input queue of the
+  worker that owns the source topic — **one shared queue per worker,
+  fed in arrival order across all topics that worker is assigned** —
+  while pass-through messages skip the workers and go straight onto
+  the shared write queue. (One queue per worker, not one per topic:
+  with per-topic queues a `workers < K` config deadlocked because the
+  worker drained one topic to EOF while the reader filled another
+  topic's queue to its cap and blocked.)
 - **N worker threads** (`--workers N`, default `min(cores, K)`) decode
   LiDAR topics concurrently. Each worker holds its own `Decoder` per
   assigned topic and feeds packets in monotonic order, satisfying the
