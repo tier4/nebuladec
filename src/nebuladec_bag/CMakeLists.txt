@@ -24,9 +24,11 @@ find_package(mcap_vendor REQUIRED)
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/ament_message_loader.cpp
   src/bag_io.cpp
+  src/convert_parallel.cpp
   src/mcap_definition_source.cpp
   src/mcap_definition_writer.cpp
   src/message_definition.cpp
+  src/output_writer.cpp
   src/packet_source.cpp
   src/point_cloud2.cpp
   src/sqlite_definition_source.cpp
@@ -90,8 +92,21 @@ if(BUILD_TESTING)
     target_link_libraries(test_convert_velodyne_vlp16 ${PROJECT_NAME})
     target_compile_definitions(test_convert_velodyne_vlp16 PRIVATE
       "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
+
+    # End-to-end equivalence test for the parallel pipeline: runs the
+    # VLP16 fixture through both `options.sequential = true` (legacy
+    # single-threaded path) and the default 3-stage pipeline, and
+    # asserts that the output bags hold the same multiset of
+    # (topic, log_time, payload) tuples plus matching ConvertResult
+    # counts.
+    ament_add_gtest(test_convert_parallel_equivalence
+      test/test_convert_parallel_equivalence.cpp)
+    target_link_libraries(test_convert_parallel_equivalence ${PROJECT_NAME})
+    target_compile_definitions(test_convert_parallel_equivalence PRIVATE
+      "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
   else()
     message(STATUS "Skipping test_convert_velodyne_vlp16: VLP16 ground-truth bag not found at ${_vlp16_bag}")
+    message(STATUS "Skipping test_convert_parallel_equivalence: VLP16 ground-truth bag not found at ${_vlp16_bag}")
   endif()
 endif()
 

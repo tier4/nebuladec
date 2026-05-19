@@ -14,21 +14,38 @@ workspace — a thin CLI wrapper around the `nebuladec_bag` API.
 ## `convert` subcommand
 
 ```text
-nebuladec convert <input> -o <output> -c <config.yaml> [--dry-run]
+nebuladec convert <input> -o <output> -c <config.yaml>
+                  [--dry-run] [-j <N> | --sequential]
 ```
 
-| Option         | Description                                                                   |
-| -------------- | ----------------------------------------------------------------------------- |
-| `input`        | Path to the input ROS 2 bag (positional, required).                           |
-| `-o, --output` | Output bag path. Required unless `--dry-run` is set.                          |
-| `-c, --config` | YAML mapping config. Required for real conversion. Optional with `--dry-run`. |
-| `--dry-run`    | Print a plan without writing any bag.                                         |
+| Option            | Description                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `input`           | Path to the input ROS 2 bag (positional, required).                                  |
+| `-o, --output`    | Output bag path. Required unless `--dry-run` is set.                                 |
+| `-c, --config`    | YAML mapping config. Required for real conversion. Optional with `--dry-run`.        |
+| `--dry-run`       | Print a plan without writing any bag.                                                |
+| `-j, --workers N` | Decoder worker pool size for the parallel pipeline. `0` (default) = auto. See below. |
+| `--sequential`    | Force the legacy single-threaded code path. Mutually exclusive with `--workers`.     |
 
 ### Behavior
 
 - **`--dry-run` alone (no config)** — Inspect-style report: a `topic | vendor | model` table.
 - **`--dry-run --config`** — Full resolution plan: an `in_topic | vendor | model | out_topic | frame_id | decodable` table plus a `resolved / skipped / errors` summary line. Exits non-zero if any errors are present.
 - **Without `--dry-run`** — Both `--output` and `--config` are required. On success, prints a per-topic results table with input topic, output topic, frame id, resolved identity, processed packet count, and emitted cloud count. Topics with no matching rule are passed through verbatim.
+- **`--workers` / `--sequential` with `--dry-run`** — Ignored (warning emitted on stderr); dry-run never enters the decode pipeline.
+
+### Performance: parallel pipeline
+
+`convert` runs as a **3-stage pipeline by default** (one reader thread, N decoder workers, one writer thread). The output bag is the same multiset of `(topic, log_time, payload)` records as the legacy single-threaded path — `ros2 bag play` behaves identically — but the wall-clock is dominated by the slowest stage rather than the sum of all three.
+
+- `--workers N` overrides the auto-chosen worker count.
+  - Capped to `K` (the number of decoded LiDAR topics found by `inspect()`).
+  - Values below `K` are snapped down to the largest divisor of `K` so each worker can own the same number of topics. Example: with `K = 8` and `--workers 5`, the effective count is `4` (each worker handles 2 topics).
+  - When `K` is prime and `--workers < K`, the effective count degenerates to `1`; pass `--workers K` (or omit the flag) for full parallelism.
+- `--sequential` forces the legacy single-threaded path. Useful for byte-for-byte regression comparison and on hosts with fewer than 3 hardware threads.
+- The pipeline auto-falls-back to the sequential path when `std::thread::hardware_concurrency() < 3` or when the bag has no decodable LiDAR topics.
+
+See [`nebuladec_bag/README.md`](../nebuladec_bag/README.md#performance-3-stage-pipeline-for-convert) for the architectural diagrams.
 
 ## Bundled third-party headers (`include/third_party/`)
 

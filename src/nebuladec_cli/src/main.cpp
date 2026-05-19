@@ -108,6 +108,11 @@ struct ConvertCliOptions
   bool have_output{false};
   bool have_config{false};
   bool dry_run{false};
+  // 0 means "auto" -- the library picks min(hardware_concurrency, K)
+  // where K is the number of decoded LiDAR topics. Mutually exclusive
+  // with --sequential at the CLI level (CLI11 `excludes`).
+  std::size_t workers{0};
+  bool sequential{false};
 };
 
 int print_dry_run(const std::vector<nebuladec::bag::ConvertPlanEntry> & entries)
@@ -169,6 +174,8 @@ int run_convert(const ConvertCliOptions & opts)
     options.input_path = opts.input_path;
     options.output_path = opts.output_path;
     options.mapping = std::move(mapping);
+    options.sequential = opts.sequential;
+    options.workers = opts.workers;
     const auto result = nebuladec::bag::convert(options);
 
     if (result.topics.empty()) {
@@ -223,6 +230,25 @@ int main(int argc, char ** argv)
     "prints the full resolution plan; without it, prints vendor/model for "
     "each packet topic.");
 
+  // Parallel pipeline knobs (see `nebuladec_bag` README "Performance"
+  // section). The 3-stage pipeline is the default; these flags only
+  // override that default.
+  auto * workers_opt = convert->add_option(
+    "-j,--workers", opts.workers,
+    "Decoder worker pool size for the parallel pipeline. 0 (default) "
+    "= auto = min(hardware_concurrency, K) where K is the number of "
+    "decoded LiDAR topics. When the requested value is below K it is "
+    "snapped down to the largest divisor of K so each worker owns the "
+    "same number of topics. Ignored under --dry-run.");
+  workers_opt->check(CLI::NonNegativeNumber);
+  auto * sequential_flag = convert->add_flag(
+    "--sequential", opts.sequential,
+    "Force the legacy single-threaded code path. Mutually exclusive "
+    "with --workers; useful as a fall-back for byte-for-byte regression "
+    "comparison or on hosts with fewer than 3 hardware threads. "
+    "Ignored under --dry-run.");
+  workers_opt->excludes(sequential_flag);
+
   // Flag matrix (mirrors prior hand-rolled behavior):
   //   --dry-run + no --config  -> inspect-style report
   //   --dry-run + --config     -> full resolution plan
@@ -232,6 +258,12 @@ int main(int argc, char ** argv)
     opts.have_config = cfg_opt->count() > 0;
     if (!opts.dry_run && (!opts.have_output || !opts.have_config)) {
       throw CLI::ValidationError("--output and --config are required without --dry-run");
+    }
+    // --workers / --sequential touch the convert pipeline; dry-run
+    // never enters that pipeline, so warn rather than silently accept
+    // a misleading invocation.
+    if (opts.dry_run && (workers_opt->count() > 0 || sequential_flag->count() > 0)) {
+      std::cerr << "warning: --workers / --sequential are ignored with --dry-run\n";
     }
   });
 

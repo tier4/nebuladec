@@ -73,6 +73,156 @@ intensity, return_type, channel, azimuth, elevation, distance, time_stamp).
 5. **Write the output** — Output mirrors the input's storage plugin and layout. For bare-file inputs the writer creates a scratch directory and renames the final storage file into place.
    - **Schema-forwarding fast path (MCAP → MCAP, bare file).** When the input bag carries embedded `Schema` records and the output is a bare-file MCAP, `convert()` skips `rosbag2_cpp::Writer` and writes directly via `mcap::McapWriter` (`McapDefinitionWriter`). Schema records are sourced in priority order: (a) input bag registry, (b) local ament index via the recursive `.msg` loader in `ament_message_loader.cpp`, (c) soft fail (empty Schema + warning, matching `rosbag2_storage_mcap`'s default). The other three cases (sqlite3 output, MCAP directory output, MCAP→MCAP where the registry is empty) keep the original `rosbag2_cpp::Writer` flow byte-for-byte.
 
+## Performance: 3-stage pipeline for `convert()`
+
+`convert()` runs as a **3-stage pipeline by default**: one reader thread,
+N decoder workers, and one writer thread, with bounded queues between
+stages. The output bag carries the same topics, timestamps, and
+payloads as a single-threaded run — `ros2 bag play` behaves identically.
+
+### Before — single-threaded (legacy, still available via `--sequential`)
+
+```text
+[Input bag]
+    │
+    ▼
+ ┌──read──┐  ┌─decode─┐  ┌─write──┐
+ │ packet │→ │ packet │→ │ cloud  │→  [Output bag]
+ └────────┘  └────────┘  └────────┘
+        ▲         ▲          ▲
+        └─── ONE thread does all three, taking turns ───┘
+```
+
+One thread reads, decodes, writes, then moves on. While the decoder is
+busy, file I/O sits idle. While write I/O is slow (MCAP + zstd to slow
+storage), decode sits idle.
+
+### After — 3-stage pipeline (default)
+
+```text
+                       ┌─ Worker A (topic /lidar_front) ──► decoded clouds ┐
+[Input bag]            │                                                    │
+    │                  ├─ Worker B (topic /lidar_left)  ──► decoded clouds ┤      ┌──────────┐
+    ▼                  │                                                    ├─────►│  Writer  │
+[Reader thread] ───────┼─ Worker C (topic /lidar_right) ──► decoded clouds ┤      │  thread  │
+ (single I/O ingest)   │                                                    │      │  (FIFO   │
+                       └──── pass-through (TF, IMU, camera, ...) ──────────┘      │  drain)  │
+                                                                                   └────┬─────┘
+                                                                                        ▼
+                                                                                  [Output bag]
+                       ◄──── all stages run concurrently ────►
+              (all four arrows feed one shared bounded write queue)
+```
+
+Each stage runs on its own thread:
+
+- **1 reader thread** pulls messages from the input bag in `log_time`
+  order. Decoded-topic packets are routed into per-topic worker queues;
+  pass-through messages skip the workers and go straight onto the
+  shared write queue.
+- **N worker threads** (`--workers N`, default `min(cores, K)`) decode
+  LiDAR topics concurrently. Each worker holds its own `Decoder` per
+  assigned topic and feeds packets in monotonic order, satisfying the
+  per-instance threading contract of `nebuladec_adapters`. When
+  `workers < K`, each worker handles **K / workers topics** evenly
+  (the worker count is snapped down to the largest divisor of K so
+  the split is exact). Decoded clouds are pushed onto the same shared
+  write queue the reader writes pass-through to.
+- **1 writer thread** drains the shared bounded queue FIFO. The reader
+  and workers are decoupled producers, so a temporarily idle topic
+  never holds back the others — the writer only ever waits on disk
+  I/O, not on a cross-topic ordering invariant. The output bag holds
+  the same multiset of `(topic, log_time, payload)` records as the
+  legacy single-threaded path; `ros2 bag play` (which is `log_time`
+  -driven) treats both bags identically.
+
+### Why this is faster
+
+Two independent gains stack:
+
+```text
+Time ────────────►
+
+Sequential:
+  Read    ▓░░░░░░░░░░░░░░░░░
+  Decode  ░▓▓▓░░░░░░░░░░░░░░
+  Write   ░░░░▓░░░░░░░░░░░░░
+          └── one batch ──┘  then repeat
+          Total wall-clock = sum of all 3 stages
+
+Pipelined:
+  Read    ▓▓▓▓▓▓▓▓▓░░░
+  Decode  ░▓▓▓▓▓▓▓▓▓▓░       (per-topic parallelism shrinks this stage)
+  Write   ░░▓▓▓▓▓▓▓▓▓▓
+          Total wall-clock ≈ MAX of the 3 stages, not their sum
+```
+
+| Mechanism                 | What it overlaps                  | When it matters                  |
+| ------------------------- | --------------------------------- | -------------------------------- |
+| Pipeline split (3 stages) | read I/O ↔ decode CPU ↔ write I/O | Always — even with 1 worker      |
+| Worker pool (N threads)   | decode of N topics concurrently   | When decode is the slowest stage |
+
+### How parallelism is chosen
+
+```text
+                                        ┌──► SEQUENTIAL (legacy thread)
+       --sequential set? ──yes──────────┘
+            │
+            no
+            ▼
+       cores < 3? ──────────yes─────────┐
+            │                            │
+            no                           ├──► SEQUENTIAL (auto-fallback)
+            ▼                            │
+       K == 0 LiDAR topics? ─yes─────────┘    (K = decoded packet
+            │                                  topics found by inspect())
+            no
+            ▼
+       workers_request = (--workers N if given) else min(cores, K)
+       workers = min(workers_request, K)
+       if workers < K:
+         workers = largest divisor of K that is ≤ workers
+            │
+            ▼
+       PIPELINE with `workers` worker threads,
+       each owning K / workers topics
+```
+
+The divisor clamp keeps load **even across workers** when `workers < K`:
+
+| K   | `--workers` requested | Effective workers | Topics per worker            |
+| --- | --------------------- | ----------------- | ---------------------------- |
+| 8   | (default, 8+ cores)   | 8                 | 1                            |
+| 8   | 5                     | 4                 | 2                            |
+| 8   | 3                     | 2                 | 4                            |
+| 6   | 5                     | 3                 | 2                            |
+| 7   | 5                     | 1                 | 7 (K is prime → degenerates) |
+
+When K is prime and `--workers < K`, the divisor clamp degenerates to 1
+worker. The CLI surfaces this in `--help`; the workaround is to pass
+`--workers K` (matching the topic count exactly).
+
+### CLI flags
+
+| Flag           | Effect                                                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--workers N`  | Override the decoder worker count. Capped to K and snapped down to the largest divisor of K (see table above).              |
+| `--sequential` | Force the legacy single-threaded path. Mutually exclusive with `--workers`. Useful for byte-for-byte regression comparison. |
+
+When neither flag is given, `convert()` runs the pipeline with
+`min(hardware_concurrency(), K)` workers (further adjusted by the
+divisor rule when needed).
+
+### Plain-language summary
+
+- The output bag is the same multiset of `(topic, log_time, payload)`
+  records whether you use `--sequential` or the default pipeline.
+- More LiDAR topics in the bag → bigger speedup. A bag with one heavy
+  LiDAR still benefits from the read/decode/write overlap, but not
+  from the worker pool.
+- Hosts with fewer than 3 hardware threads, or bags with no LiDAR
+  topics to decode, fall back to the sequential path automatically.
+
 ## Topic naming
 
 There is no fixed naming convention — the package follows whatever the
