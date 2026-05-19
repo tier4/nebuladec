@@ -129,9 +129,14 @@ storage), decode sits idle.
 Each stage runs on its own thread:
 
 - **1 reader thread** pulls messages from the input bag in `log_time`
-  order. Decoded-topic packets are routed into per-topic worker queues;
-  pass-through messages skip the workers and go straight onto the
-  shared write queue.
+  order. Decoded-topic packets are routed into the input queue of the
+  worker that owns the source topic — **one shared queue per worker,
+  fed in arrival order across all topics that worker is assigned** —
+  while pass-through messages skip the workers and go straight onto
+  the shared write queue. (One queue per worker, not one per topic:
+  with per-topic queues a `workers < K` config deadlocked because the
+  worker drained one topic to EOF while the reader filled another
+  topic's queue to its cap and blocked.)
 - **N worker threads** (`--workers N`, default `min(cores, K)`) decode
   LiDAR topics concurrently. Each worker holds its own `Decoder` per
   assigned topic and feeds packets in monotonic order, satisfying the
