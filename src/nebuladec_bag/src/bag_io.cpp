@@ -1194,14 +1194,27 @@ private:
   void push_cloud(
     DecodedTopicSlot & slot, nebula::drivers::NebulaPointCloudPtr cloud, std::int64_t cloud_stamp)
   {
-    // Deep-copy the cloud before crossing the worker->writer thread
-    // boundary. Some upstream nebula drivers (e.g. the Velodyne scan
-    // decoder) re-use the cloud's point buffer across consecutive
-    // scans, so the shared_ptr aliases storage that the driver will
-    // mutate on the next `feed()`. The sequential path was insulated
-    // because it wrote the cloud immediately; we queue it, so a
-    // snapshot is required.
-    auto cloud_snapshot = std::make_shared<nebula::drivers::NebulaPointCloud>(*cloud);
+    // Hand the cloud across the worker->writer boundary by *swapping*
+    // its point buffer into a fresh NebulaPointCloud rather than
+    // deep-copying it.
+    //
+    // The hand-off must not alias storage the driver will mutate
+    // later: some upstream nebula decoders (e.g. Velodyne's scan
+    // decoder) reuse the same `NebulaPointCloud` object across scans
+    // via `clear()` / `push_back()`. Seyond's decoder swaps in a
+    // fresh `make_shared` after each emit, so for that vendor any
+    // hand-off would be safe -- but `swap` works uniformly and gives
+    // both vendors the same O(1) hand-off cost.
+    //
+    // After `swap`, the driver's pointer aliases an empty container
+    // (size=0, capacity=0) and our snapshot owns the points. The
+    // driver is free to `clear` / `push_back` / re-`reset` it on the
+    // next packet without touching our queued data. This replaces a
+    // per-cloud `memcpy` of hundreds of thousands of points with a
+    // three-pointer swap, removing a major source of heap-allocator
+    // and L3-cache contention between concurrent workers.
+    auto cloud_snapshot = std::make_shared<nebula::drivers::NebulaPointCloud>();
+    cloud_snapshot->swap(*cloud);
     WriteItem item;
     item.kind = WriteItem::Kind::Cloud;
     item.out_topic = slot.out_topic;
