@@ -18,9 +18,10 @@ add_executable(nebuladec src/main.cpp)
 if(${PROJECT_NAME}_FOUND_BUILD_DEPENDS)
   ament_target_dependencies(nebuladec ${${PROJECT_NAME}_FOUND_BUILD_DEPENDS})
 endif()
-# tabulate (p-ranav/tabulate) is vendored as the single-header
-# amalgamation at third_party/tabulate.hpp (MIT) -- keeps IntelliSense
-# working before the first build and avoids a rosdep dependency.
+# tabulate (p-ranav/tabulate) and indicators (p-ranav/indicators) are
+# vendored as single-header amalgamations at third_party/tabulate.hpp
+# and third_party/indicators.hpp (both MIT) -- keeps IntelliSense
+# working before the first build and avoids extra rosdep dependencies.
 target_include_directories(nebuladec SYSTEM PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
 install(TARGETS nebuladec

@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -82,6 +83,24 @@ struct InspectSummary
 /// topics and Robosense LiDAR topics are identified but not decoded.
 InspectSummary inspect(const std::string & input_path);
 
+/// @brief Aggregated decode-progress snapshot.
+///
+/// Reports cumulative reader progress across every decoded topic in the
+/// bag (passthrough traffic is not counted). `messages_total` is the sum
+/// of bag-metadata message counts for the decoded topics; it is fixed
+/// for the duration of a `convert()` call. `messages_done` only ever
+/// increases.
+///
+/// Emitted from the reader stage, not the worker pool, so the figure
+/// tracks bytes pulled from the input rather than decoded clouds
+/// produced -- it leads worker throughput slightly but is the right
+/// signal for a "how much of the bag is left" UI.
+struct ProgressEvent
+{
+  std::size_t messages_done{0};
+  std::size_t messages_total{0};
+};
+
 /// @brief Options accepted by `convert()`.
 ///
 /// The set of (in_topic -> out_topic, frame_id) pairs is driven entirely
@@ -101,6 +120,14 @@ InspectSummary inspect(const std::string & input_path);
 ///     when the result is `< K`, snapped down to the largest divisor of
 ///     K so each worker can be assigned an equal share of topics.
 ///   * `workers` is ignored when `sequential = true`.
+///
+/// `on_progress`, when set, is invoked periodically from the reader
+/// stage with the latest cumulative count. It is called at most every
+/// ~50 ms while reading, plus exactly once at end-of-input with the
+/// final count. Callbacks are serialised behind an internal lock and
+/// thrown exceptions are swallowed, so a UI bug cannot corrupt the
+/// pipeline. Leave empty (default) to disable; the per-message branch
+/// is a single nullptr check when disabled.
 struct ConvertOptions
 {
   std::string input_path;
@@ -108,6 +135,7 @@ struct ConvertOptions
   TopicMapping mapping;
   bool sequential{false};
   std::size_t workers{0};
+  std::function<void(const ProgressEvent &)> on_progress{};
 };
 
 /// @brief Per-in-topic conversion statistics produced by `convert()`.

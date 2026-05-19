@@ -1217,6 +1217,22 @@ std::vector<std::unique_ptr<DecodedTopicSlot>> make_decoded_slots(
   return slots;
 }
 
+/// Sum of bag-metadata message counts for the in_topics that will be
+/// decoded. Drives the `messages_total` field of `ProgressEvent`.
+/// Passthrough topics are deliberately excluded -- the progress bar
+/// reports decode work, not raw bag throughput.
+std::size_t sum_decoded_message_counts(
+  const rosbag2_cpp::Reader & reader, const std::unordered_set<std::string> & decoded_topic_names)
+{
+  std::size_t total = 0;
+  for (const auto & info : reader.get_metadata().topics_with_message_count) {
+    if (decoded_topic_names.count(info.topic_metadata.name) != 0U) {
+      total += info.message_count;
+    }
+  }
+  return total;
+}
+
 /// Parallel driver: Reader -> per-topic Worker pool -> shared
 /// WriteQueue -> Writer (on the calling thread).
 ///
@@ -1244,7 +1260,7 @@ ConvertResult run_convert_parallel(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
-  std::size_t workers)
+  std::size_t workers, ProgressReporter & reporter)
 {
   AbortFlag abort;
 
@@ -1323,6 +1339,9 @@ ConvertResult run_convert_parallel(
         if (auto it = slot_by_topic.find(topic_name); it != slot_by_topic.end()) {
           BagMsgPtr shared_msg(std::move(bag_msg));
           it->second->in_queue->push(std::move(shared_msg));
+          // Reader-side progress tick: counts every decoded-topic
+          // message dispatched to a worker (matches sequential path).
+          reporter.advance();
         } else if (passthrough_by_name.count(topic_name) != 0U) {
           WriteItem item;
           item.kind = WriteItem::Kind::Passthrough;
@@ -1397,7 +1416,7 @@ ConvertResult dispatch_to_driver(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
-  const WorkerPolicy & policy);
+  const WorkerPolicy & policy, ProgressReporter & reporter);
 
 /// Shared sequential driver used by both the generic `rosbag2_cpp::Writer`
 /// path and the MCAP schema-forwarding fast path. The caller owns the
@@ -1413,7 +1432,8 @@ ConvertResult dispatch_to_driver(
 ConvertResult run_convert_sequential(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
-  const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer)
+  const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
+  ProgressReporter & reporter)
 {
   TopicStateMap states;
   auto routing = register_decoded_topics(writer, decoded_rules, states);
@@ -1440,6 +1460,7 @@ ConvertResult run_convert_sequential(
       auto packets = it->second.packet_source->extract(serialized);
       const std::string & in_topic = it->first;
       ++it->second.packets;
+      reporter.advance();
       for (const auto & pkt : packets) {
         routing.last_stamp_by_in[in_topic] = pkt.stamp_ns;
         feed_packet(
@@ -1479,14 +1500,15 @@ ConvertResult dispatch_to_driver(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata, OutputWriter & writer,
-  const WorkerPolicy & policy)
+  const WorkerPolicy & policy, ProgressReporter & reporter)
 {
   if (policy.sequential) {
     return run_convert_sequential(
-      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer);
+      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, reporter);
   }
   return run_convert_parallel(
-    reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy.workers);
+    reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy.workers,
+    reporter);
 }
 
 /// Bare-file MCAP convert path that bypasses `rosbag2_cpp::Writer` so
@@ -1498,7 +1520,7 @@ ConvertResult convert_via_definition_writer(
   const std::unordered_set<std::string> & decoded_topic_names,
   const std::vector<rosbag2_storage::TopicMetadata> & all_topic_metadata,
   const fs::path & final_output_path, const MessageDefinitionRegistry & registry,
-  const WorkerPolicy & policy)
+  const WorkerPolicy & policy, ProgressReporter & reporter)
 {
   if (fs::exists(final_output_path)) {
     throw std::runtime_error(
@@ -1510,7 +1532,7 @@ ConvertResult convert_via_definition_writer(
     McapDefinitionWriter mcap_writer{final_output_path, registry};
     McapDefinitionOutputWriter writer{mcap_writer};
     result = dispatch_to_driver(
-      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy);
+      reader, decoded_rules, decoded_topic_names, all_topic_metadata, writer, policy, reporter);
   }  // mcap_writer destructor finalises the mcap file
   return result;
 }
@@ -1544,6 +1566,14 @@ ConvertResult convert(const ConvertOptions & options)
   }
   const auto all_topic_metadata = collect_topic_metadata(reader);
 
+  // ProgressReporter owns the throttling + callback dispatch for the
+  // duration of this convert() call. `messages_total` is fixed at
+  // construction from bag metadata; `on_progress` is the caller's
+  // optional sink. When `on_progress` is empty, every `advance()` /
+  // `finalize()` collapses to an early return.
+  ProgressReporter reporter{
+    options.on_progress, sum_decoded_message_counts(reader, decoded_topic_names)};
+
   // Resolve the execution policy (sequential vs 3-stage pipeline)
   // once we know how many decode-target topics the bag carries.
   // Default is pipeline; auto-falls-back to sequential when
@@ -1572,9 +1602,11 @@ ConvertResult convert(const ConvertOptions & options)
   if (in_spec.storage_id == "mcap" && collapse_to_file) {
     auto registry = load_definition_registry(in_spec);
     if (!registry.empty()) {
-      return convert_via_definition_writer(
+      auto result = convert_via_definition_writer(
         reader, support.decoded, decoded_topic_names, all_topic_metadata, final_output_path,
-        registry, worker_policy);
+        registry, worker_policy, reporter);
+      reporter.finalize();
+      return result;
     }
   }
 
@@ -1596,8 +1628,10 @@ ConvertResult convert(const ConvertOptions & options)
     rb2_writer.open(out_opts);
     Rosbag2OutputWriter writer{rb2_writer};
     result = dispatch_to_driver(
-      reader, support.decoded, decoded_topic_names, all_topic_metadata, writer, worker_policy);
+      reader, support.decoded, decoded_topic_names, all_topic_metadata, writer, worker_policy,
+      reporter);
   }  // rb2_writer scope ends here -- destructor flushes and closes files.
+  reporter.finalize();
 
   // Phase 4: collapse scratch -> bare file for bare-file inputs, then
   // return the result.

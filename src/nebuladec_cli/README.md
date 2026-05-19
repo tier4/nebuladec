@@ -47,12 +47,24 @@ nebuladec convert <input> -o <output> -c <config.yaml>
 
 See [`nebuladec_bag/README.md`](../nebuladec_bag/README.md#performance-3-stage-pipeline-for-convert) for the architectural diagrams.
 
+### Progress bar
+
+`nebuladec convert` renders one overall progress bar while it decodes. The bar shows percent complete, the elapsed time, the estimated remaining time, and a `<done> / <total> messages` postfix. The total counts only the bag-metadata message count of the input topics that will actually be decoded (passthrough traffic is excluded).
+
+- Shown by default when stdout is a TTY **and** the bag carries at least one decoded LiDAR topic.
+- Automatically hidden when stdout is not a TTY (CI logs, pipes, `tee` to a file).
+- `--no-progress` forces the bar off even on a TTY. Useful when you want a clean redirected log or when running under another wrapper that already shows its own progress UI.
+- Ignored under `--dry-run` (no decoding happens).
+
+The bar is driven by the `ConvertOptions::on_progress` callback exposed from `nebuladec_bag`; the CLI is the only consumer today, but library users can pass their own sink instead.
+
 ## Bundled third-party headers (`include/third_party/`)
 
-| Header         | Use                                                                                                      |
-| -------------- | -------------------------------------------------------------------------------------------------------- |
-| `CLI11.hpp`    | CLI11 v2.4.2 (github.com/CLIUtils/CLI11, BSD-3). Used from `main.cpp` via `add_option`, `add_flag`, etc. |
-| `tabulate.hpp` | p-ranav/tabulate. `tabulate::Table` is used to render the dry-run and result summary ASCII tables.       |
+| Header           | Use                                                                                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLI11.hpp`      | CLI11 v2.4.2 (github.com/CLIUtils/CLI11, BSD-3). Used from `main.cpp` via `add_option`, `add_flag`, etc.                                                 |
+| `tabulate.hpp`   | p-ranav/tabulate. `tabulate::Table` is used to render the dry-run and result summary ASCII tables.                                                       |
+| `indicators.hpp` | p-ranav/indicators (MIT). `indicators::BlockProgressBar` drives the `convert` decode progress bar; the CLI keeps a single overall bar across all topics. |
 
 As the `CMakeLists.txt` comments explain, the headers are vendored so
 IntelliSense works before the first build and so there is no extra rosdep
@@ -84,7 +96,7 @@ Schema:
 
 - `buildtool_depend`: `ament_cmake_auto`
 - `depend`: `nebuladec_bag`, `nebuladec_core`
-- No third-party rosdep entries — CLI11 and tabulate are vendored as single headers.
+- No third-party rosdep entries — CLI11, tabulate, and indicators are vendored as single headers.
 
 ## Build artifacts
 

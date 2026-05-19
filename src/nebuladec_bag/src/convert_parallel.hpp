@@ -15,17 +15,96 @@
 #ifndef CONVERT_PARALLEL_HPP_
 #define CONVERT_PARALLEL_HPP_
 
+#include "nebuladec_bag/bag_io.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
 #include <exception>
+#include <functional>
 #include <mutex>
 #include <utility>
 
 namespace nebuladec::bag
 {
+
+/// @brief Reader-side throttled progress reporter.
+///
+/// Counts every decoded-topic message the reader hands to a worker
+/// (parallel path) or feeds to a decoder inline (sequential path), then
+/// forwards a `ProgressEvent` to `on_progress` at most every ~50 ms.
+/// `finalize()` always emits the final snapshot, even if it would
+/// otherwise be throttled, so the bar always lands on 100%.
+///
+/// All public methods are thread-safe and no-op when `on_progress` is
+/// empty -- `advance()` collapses to a single function-pointer check +
+/// early return in that case. Callback exceptions are swallowed so a
+/// UI bug cannot abort the convert pipeline.
+class ProgressReporter
+{
+public:
+  ProgressReporter(
+    std::function<void(const ProgressEvent &)> on_progress, std::size_t total,
+    std::chrono::milliseconds interval = std::chrono::milliseconds{50})
+  : on_progress_(std::move(on_progress)),
+    total_(total),
+    interval_(interval),
+    last_emit_(std::chrono::steady_clock::now())
+  {
+  }
+
+  ProgressReporter(const ProgressReporter &) = delete;
+  ProgressReporter & operator=(const ProgressReporter &) = delete;
+  ProgressReporter(ProgressReporter &&) = delete;
+  ProgressReporter & operator=(ProgressReporter &&) = delete;
+  ~ProgressReporter() = default;
+
+  void advance() noexcept
+  {
+    if (!on_progress_) {
+      return;
+    }
+    const auto done = done_.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    const auto now = std::chrono::steady_clock::now();
+    std::unique_lock<std::mutex> lk(m_, std::try_to_lock);
+    if (!lk.owns_lock()) {
+      return;  // another caller is already emitting; skip this tick
+    }
+    if (now - last_emit_ < interval_) {
+      return;
+    }
+    last_emit_ = now;
+    emit_locked(done);
+  }
+
+  void finalize() noexcept
+  {
+    if (!on_progress_) {
+      return;
+    }
+    std::lock_guard<std::mutex> lk(m_);
+    emit_locked(done_.load(std::memory_order_acquire));
+  }
+
+private:
+  void emit_locked(std::size_t done) noexcept
+  {
+    try {
+      on_progress_(ProgressEvent{done, total_});
+    } catch (...) {
+      // Swallow: a broken UI callback must not poison the pipeline.
+    }
+  }
+
+  std::function<void(const ProgressEvent &)> on_progress_;
+  const std::size_t total_;
+  const std::chrono::milliseconds interval_;
+  std::atomic<std::size_t> done_{0};
+  std::mutex m_;
+  std::chrono::steady_clock::time_point last_emit_;
+};
 
 /// Tuning knobs for the parallel pipeline.
 ///
