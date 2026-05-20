@@ -210,10 +210,16 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::feed(
     first_scan_packets_.push_back(packet);
   }
 
+  // Detect whether *this* packet caused the driver to emit a scan by
+  // comparing ready_clouds_ before and after parse. The callback only
+  // fires synchronously inside parse_cloud_packet(), so any growth in
+  // the deque must be attributable to this packet alone.
+  const auto ready_before = ready_clouds_.size();
   {
     NEBULADEC_PROFILE_SCOPE("hesai_driver_parse_cloud_packet");
     driver_->parse_cloud_packet(packet);
   }
+  last_feed_emitted_ = ready_clouds_.size() > ready_before;
 
   // Stop capturing once the decoder has produced at least one cloud:
   // replaying the packets that led up to (and including) the first cut
@@ -240,7 +246,14 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::flush()
   // those packets are known to have triggered at least one cut (that
   // is precisely the condition under which we stopped capturing), so
   // feeding them again guarantees the trailing buffer is emitted.
-  if (!driver_ || first_scan_packets_.empty()) {
+  //
+  // Skip flush when the final packet already triggered the callback --
+  // in that case the driver's internal buffer holds only that one
+  // packet's points and replaying first-scan packets would synthesise
+  // a spurious cloud (mostly first-scan data) on top of the already-
+  // emitted real scan. Mirrors SeyondAdapter's last_feed_scan_complete_
+  // guard.
+  if (!driver_ || first_scan_packets_.empty() || last_feed_emitted_) {
     return std::nullopt;
   }
   for (const auto & pkt : first_scan_packets_) {
