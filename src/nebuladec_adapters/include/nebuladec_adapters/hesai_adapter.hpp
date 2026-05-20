@@ -73,6 +73,13 @@ private:
   /// does not reliably cross the cut relative to the last real packet.
   std::vector<std::vector<std::uint8_t>> first_scan_packets_;
   bool first_scan_captured_{false};
+  /// True iff the most recent feed() call's packet triggered the cut
+  /// callback. When set, the driver has just emitted the trailing scan
+  /// and its internal buffer holds only that one cut-triggering packet
+  /// -- replaying first-scan packets in flush() would synthesise a
+  /// spurious cloud (mostly first-scan data) on top of the already-
+  /// emitted real scan. Mirrors SeyondAdapter::last_feed_scan_complete_.
+  bool last_feed_emitted_{false};
 };
 
 }  // namespace nebuladec::adapters

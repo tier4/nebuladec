@@ -153,6 +153,7 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::feed(
   }();
   auto & cloud = std::get<0>(result);
   const bool emitted = cloud && !cloud->empty();
+  last_feed_emitted_ = emitted;
 
   if (!first_scan_captured_ && emitted) {
     first_scan_captured_ = true;
@@ -174,7 +175,13 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> VelodyneAdapter::flush()
   // the original wrap transition (they are known to have triggered one,
   // which is why we stopped capturing) and lets the driver emit the
   // trailing cloud.
-  if (!driver_ || first_scan_packets_.empty()) {
+  //
+  // Skip flush when the final packet already returned a non-empty scan
+  // -- `scan_pc_` then holds only that one packet's points and
+  // replaying first-scan packets would synthesise a spurious cloud
+  // (mostly first-scan data) on top of the already-emitted real scan.
+  // Mirrors HesaiAdapter's guard.
+  if (!driver_ || first_scan_packets_.empty() || last_feed_emitted_) {
     return std::nullopt;
   }
   for (const auto & [pkt, stamp] : first_scan_packets_) {

@@ -65,6 +65,13 @@ private:
   /// reproduces the original azimuth-wrap transition (cf. Hesai).
   std::vector<std::pair<std::vector<std::uint8_t>, double>> first_scan_packets_;
   bool first_scan_captured_{false};
+  /// True iff the most recent feed() call's packet caused the scan
+  /// decoder to emit a non-empty cloud. When set, the driver has just
+  /// drained the trailing scan and its `scan_pc_` holds only that one
+  /// packet's points -- replaying first-scan packets in flush() would
+  /// synthesise a spurious cloud (mostly first-scan data) on top of the
+  /// already-emitted real scan. Mirrors HesaiAdapter's guard.
+  bool last_feed_emitted_{false};
 };
 
 }  // namespace nebuladec::adapters
