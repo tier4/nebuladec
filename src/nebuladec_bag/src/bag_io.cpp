@@ -523,6 +523,299 @@ InspectSummary inspect_sqlite3_file(const InputSpec & spec)
   return build_summary(idx.packet_order, idx.topic_states, message_counts);
 }
 
+/// Owns a `mkdtemp`-created scratch directory and deletes it on scope
+/// exit. The directory only ever contains a symlink to the user's bag
+/// plus a synthesized `metadata.yaml`, so `remove_all` cleanup is
+/// O(symlink+yaml) and never touches the original bag file.
+struct TempDirGuard
+{
+  fs::path dir;
+
+  TempDirGuard() = default;
+  ~TempDirGuard()
+  {
+    if (!dir.empty()) {
+      std::error_code ec;
+      fs::remove_all(dir, ec);  // best-effort cleanup; failures are not actionable here.
+    }
+  }
+  TempDirGuard(const TempDirGuard &) = delete;
+  TempDirGuard & operator=(const TempDirGuard &) = delete;
+  TempDirGuard(TempDirGuard && other) noexcept : dir(std::move(other.dir)) { other.dir.clear(); }
+  TempDirGuard & operator=(TempDirGuard && other) noexcept
+  {
+    if (this != &other) {
+      if (!dir.empty()) {
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+      }
+      dir = std::move(other.dir);
+      other.dir.clear();
+    }
+    return *this;
+  }
+};
+
+/// Verbatim columns from `topics` plus the live per-topic message count.
+/// Carries everything needed to fill rosbag2's `topics_with_message_count`
+/// list without re-opening the bag.
+struct Sqlite3FullTopicRow
+{
+  std::string name;
+  std::string type;
+  std::string serialization_format;
+  std::string offered_qos_profiles;
+  std::size_t message_count{0};
+};
+
+/// Result of pre-baking a bare `.db3` so `rosbag2_cpp::Reader::open()`
+/// finds a ready-made `metadata.yaml` and skips its O(N) BagMetadata
+/// reconstruction. The synthesized spec points at the temp directory
+/// (storage_id="sqlite3", is_directory=true) which rosbag2 opens via
+/// the same code path as a recorder-written bag directory.
+struct SyntheticMetadataResult
+{
+  InputSpec spec;
+  TempDirGuard guard;
+};
+
+/// Single-pass aggregate query: total message count plus min/max
+/// timestamp across the *entire* `messages` table. rosbag2 needs both
+/// the overall starting_time (`MIN(timestamp)`) and duration
+/// (`MAX-MIN`); the COUNT comes free in the same scan.
+struct Sqlite3BagAggregate
+{
+  std::size_t total_count{0};
+  std::int64_t min_timestamp_ns{0};
+  std::int64_t max_timestamp_ns{0};
+};
+
+Sqlite3BagAggregate query_bag_aggregate(sqlite3 * db)
+{
+  Sqlite3BagAggregate agg;
+  SqliteStmtGuard sg;
+  if (
+    sqlite3_prepare_v2(
+      db, "SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM messages", -1, &sg.stmt, nullptr) !=
+    SQLITE_OK) {
+    throw std::runtime_error(
+      std::string{"failed to prepare bag-aggregate query: "} + sqlite3_errmsg(db));
+  }
+  if (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+    const sqlite3_int64 count = sqlite3_column_int64(sg.stmt, 0);
+    agg.total_count = count > 0 ? static_cast<std::size_t>(count) : 0U;
+    if (sqlite3_column_type(sg.stmt, 1) != SQLITE_NULL) {
+      agg.min_timestamp_ns = sqlite3_column_int64(sg.stmt, 1);
+    }
+    if (sqlite3_column_type(sg.stmt, 2) != SQLITE_NULL) {
+      agg.max_timestamp_ns = sqlite3_column_int64(sg.stmt, 2);
+    }
+  }
+  return agg;
+}
+
+/// `SELECT id, name, type, serialization_format, offered_qos_profiles
+/// FROM topics`. Differs from `query_sqlite3_topics` (inspect path) by
+/// also fetching the serialization-format and QoS columns that rosbag2
+/// requires in `metadata.yaml`.
+std::vector<Sqlite3FullTopicRow> query_all_topics_full(sqlite3 * db)
+{
+  std::vector<Sqlite3FullTopicRow> out;
+  SqliteStmtGuard sg;
+  if (
+    sqlite3_prepare_v2(
+      db, "SELECT id, name, type, serialization_format, offered_qos_profiles FROM topics", -1,
+      &sg.stmt, nullptr) != SQLITE_OK) {
+    throw std::runtime_error(
+      std::string{"failed to prepare full-topics query: "} + sqlite3_errmsg(db));
+  }
+  while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+    Sqlite3FullTopicRow row;
+    row.name = reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 1));
+    row.type = reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 2));
+    row.serialization_format = reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 3));
+    row.offered_qos_profiles = reinterpret_cast<const char *>(sqlite3_column_text(sg.stmt, 4));
+    out.push_back(std::move(row));
+  }
+  return out;
+}
+
+/// Per-topic message counts keyed by *topic name* (not id), suitable
+/// for joining onto `Sqlite3FullTopicRow`. Built from a single
+/// `GROUP BY topic_id` scan; topics with zero messages simply do not
+/// appear in the result and are treated as zero downstream.
+std::unordered_map<std::string, std::size_t> query_per_topic_counts_all(
+  sqlite3 * db, const std::unordered_map<std::string, int> & name_to_id)
+{
+  std::unordered_map<int, std::string> id_to_name;
+  id_to_name.reserve(name_to_id.size());
+  for (const auto & [name, id] : name_to_id) {
+    id_to_name.emplace(id, name);
+  }
+
+  std::unordered_map<std::string, std::size_t> counts;
+  counts.reserve(name_to_id.size());
+  SqliteStmtGuard sg;
+  if (
+    sqlite3_prepare_v2(
+      db, "SELECT topic_id, COUNT(*) FROM messages GROUP BY topic_id", -1, &sg.stmt, nullptr) !=
+    SQLITE_OK) {
+    throw std::runtime_error(
+      std::string{"failed to prepare per-topic count query: "} + sqlite3_errmsg(db));
+  }
+  while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+    const int topic_id = sqlite3_column_int(sg.stmt, 0);
+    const sqlite3_int64 count = sqlite3_column_int64(sg.stmt, 1);
+    if (count < 0) {
+      continue;
+    }
+    auto it = id_to_name.find(topic_id);
+    if (it == id_to_name.end()) {
+      continue;
+    }
+    counts.emplace(it->second, static_cast<std::size_t>(count));
+  }
+  return counts;
+}
+
+/// Emit a rosbag2-shaped `metadata.yaml` (version 5) into `out`.
+/// Schema mirrors what `rosbag2_storage::BagMetadata` serializes when a
+/// recorder finalises a bag, so `rosbag2_cpp::Reader::open(dir)` can
+/// consume it without falling back to the COUNT/MIN/MAX rebuild path.
+void emit_metadata_yaml(
+  std::ostream & out, const std::string & relative_file_path,
+  const std::vector<Sqlite3FullTopicRow> & topics, const Sqlite3BagAggregate & agg)
+{
+  const std::int64_t duration_ns =
+    agg.total_count > 0 ? (agg.max_timestamp_ns - agg.min_timestamp_ns) : 0;
+
+  YAML::Emitter y;
+  y << YAML::BeginMap;
+  y << YAML::Key << "rosbag2_bagfile_information" << YAML::Value << YAML::BeginMap;
+  y << YAML::Key << "version" << YAML::Value << 5;
+  y << YAML::Key << "storage_identifier" << YAML::Value << "sqlite3";
+  y << YAML::Key << "duration" << YAML::Value << YAML::BeginMap << YAML::Key << "nanoseconds"
+    << YAML::Value << duration_ns << YAML::EndMap;
+  y << YAML::Key << "starting_time" << YAML::Value << YAML::BeginMap << YAML::Key
+    << "nanoseconds_since_epoch" << YAML::Value << agg.min_timestamp_ns << YAML::EndMap;
+  y << YAML::Key << "message_count" << YAML::Value << agg.total_count;
+  y << YAML::Key << "topics_with_message_count" << YAML::Value << YAML::BeginSeq;
+  for (const auto & t : topics) {
+    y << YAML::BeginMap;
+    y << YAML::Key << "topic_metadata" << YAML::Value << YAML::BeginMap;
+    y << YAML::Key << "name" << YAML::Value << t.name;
+    y << YAML::Key << "type" << YAML::Value << t.type;
+    y << YAML::Key << "serialization_format" << YAML::Value << t.serialization_format;
+    // QoS payload contains newlines + colons; force a double-quoted
+    // scalar so yaml-cpp escapes them rather than producing block style
+    // (rosbag2's loader accepts both, but quoted is unambiguous).
+    y << YAML::Key << "offered_qos_profiles" << YAML::Value << YAML::DoubleQuoted
+      << t.offered_qos_profiles;
+    y << YAML::EndMap;
+    y << YAML::Key << "message_count" << YAML::Value << t.message_count;
+    y << YAML::EndMap;
+  }
+  y << YAML::EndSeq;
+  y << YAML::Key << "compression_format" << YAML::Value << "";
+  y << YAML::Key << "compression_mode" << YAML::Value << "";
+  y << YAML::Key << "relative_file_paths" << YAML::Value << YAML::BeginSeq << relative_file_path
+    << YAML::EndSeq;
+  y << YAML::Key << "files" << YAML::Value << YAML::BeginSeq;
+  y << YAML::BeginMap;
+  y << YAML::Key << "path" << YAML::Value << relative_file_path;
+  y << YAML::Key << "starting_time" << YAML::Value << YAML::BeginMap << YAML::Key
+    << "nanoseconds_since_epoch" << YAML::Value << agg.min_timestamp_ns << YAML::EndMap;
+  y << YAML::Key << "duration" << YAML::Value << YAML::BeginMap << YAML::Key << "nanoseconds"
+    << YAML::Value << duration_ns << YAML::EndMap;
+  y << YAML::Key << "message_count" << YAML::Value << agg.total_count;
+  y << YAML::EndMap;
+  y << YAML::EndSeq;
+  y << YAML::EndMap;
+  y << YAML::EndMap;
+
+  out << y.c_str() << '\n';
+}
+
+/// Bake a `metadata.yaml` + symlinked `.db3` into a fresh scratch
+/// directory so `rosbag2_cpp::Reader::open()` short-circuits its bag
+/// metadata rebuild. The scratch directory is owned by the returned
+/// `TempDirGuard` and removed when the result goes out of scope.
+///
+/// Why a symlink instead of a copy: bags are typically multi-GB and we
+/// only want to dodge the metadata scan, not duplicate storage.
+/// rosbag2 opens the file read-only so the link target is unaffected.
+SyntheticMetadataResult synthesize_metadata_dir_for_db3(const InputSpec & spec)
+{
+  SqliteGuard db_guard;
+  if (sqlite3_open_v2(spec.uri.c_str(), &db_guard.db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    std::string msg = "failed to open sqlite3 bag: ";
+    msg += spec.uri;
+    if (db_guard.db) {
+      msg += " (";
+      msg += sqlite3_errmsg(db_guard.db);
+      msg += ")";
+    }
+    throw std::runtime_error(msg);
+  }
+
+  const auto topic_rows = query_sqlite3_topics(db_guard.db);
+  std::unordered_map<std::string, int> name_to_id;
+  name_to_id.reserve(topic_rows.size());
+  for (const auto & r : topic_rows) {
+    name_to_id.emplace(r.name, r.id);
+  }
+  auto full_topics = query_all_topics_full(db_guard.db);
+  const auto per_topic_counts = query_per_topic_counts_all(db_guard.db, name_to_id);
+  for (auto & t : full_topics) {
+    if (auto it = per_topic_counts.find(t.name); it != per_topic_counts.end()) {
+      t.message_count = it->second;
+    }
+  }
+  const auto agg = query_bag_aggregate(db_guard.db);
+
+  TempDirGuard guard;
+  {
+    auto base = fs::temp_directory_path() / "nebuladec_db3meta_XXXXXX";
+    std::string name_template = base.string();
+    char * made = ::mkdtemp(name_template.data());
+    if (!made) {
+      throw std::runtime_error("failed to create temp dir for synthesized metadata.yaml");
+    }
+    guard.dir = fs::path(made);
+  }
+
+  // rosbag2 reads `relative_file_paths` from metadata.yaml and opens
+  // each entry as `<dir>/<basename>`. Reuse the original basename so
+  // recorder-style suffixes (e.g. `<uuid>_0.db3`) flow through and the
+  // log line stays recognisable.
+  const auto link_name = fs::path(spec.uri).filename();
+  const auto link_path = guard.dir / link_name;
+  std::error_code ec;
+  fs::create_symlink(fs::absolute(spec.uri), link_path, ec);
+  if (ec) {
+    throw std::runtime_error(
+      "failed to symlink bag into temp dir: " + ec.message() + " (" + link_path.string() + ")");
+  }
+
+  const auto metadata_path = guard.dir / "metadata.yaml";
+  std::ofstream out(metadata_path);
+  if (!out) {
+    throw std::runtime_error(
+      "failed to open synthesized metadata.yaml for write: " + metadata_path.string());
+  }
+  emit_metadata_yaml(out, link_name.string(), full_topics, agg);
+  out.close();
+  if (!out) {
+    throw std::runtime_error(
+      "failed to flush synthesized metadata.yaml: " + metadata_path.string());
+  }
+
+  SyntheticMetadataResult result;
+  result.spec = InputSpec{guard.dir.string(), "sqlite3", true};
+  result.guard = std::move(guard);
+  return result;
+}
+
 }  // namespace
 
 InspectSummary inspect(const std::string & input_path)
@@ -1740,8 +2033,23 @@ ConvertResult convert(const ConvertOptions & options)
   // to passthrough instead of producing an empty PointCloud2 topic.
   const auto identity_by_topic = build_identity_index(inspect(options.input_path));
 
+  // For a bare `.db3`, `rosbag2_cpp::Reader::open()` would otherwise
+  // rebuild BagMetadata by running COUNT(*)/MIN(timestamp)/MAX(timestamp)
+  // over the whole `messages` table (~10s on the user's ~18GB bag).
+  // Pre-bake a `metadata.yaml` plus a symlink in a scratch dir and feed
+  // *that* directory to the reader, so it reads metadata in O(yaml-size)
+  // instead. `synth_guard` keeps the temp dir alive for the duration of
+  // the convert call; cleanup happens in its destructor.
+  TempDirGuard synth_guard;
+  InputSpec reader_spec = in_spec;
+  if (!in_spec.is_directory && in_spec.storage_id == "sqlite3") {
+    auto synth = synthesize_metadata_dir_for_db3(in_spec);
+    reader_spec = synth.spec;
+    synth_guard = std::move(synth.guard);
+  }
+
   rosbag2_cpp::Reader reader;
-  reader.open(to_storage_options(in_spec));
+  reader.open(to_storage_options(reader_spec));
 
   // Phase 2: discover packet topics, resolve them against the mapping,
   // then split by SupportRegistry into decoded vs demoted.
