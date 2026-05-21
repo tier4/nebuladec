@@ -33,6 +33,7 @@
     "suppr",
     "tabulate",
     "unboundaried",
-    "unloadable"
+    "unloadable",
+    "xfmt"
   ]
 }
