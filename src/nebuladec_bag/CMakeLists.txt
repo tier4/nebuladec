@@ -123,12 +123,23 @@ if(BUILD_TESTING)
     target_compile_definitions(test_convert_workers_one PRIVATE
       "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
 
-    # Contract test for `ConvertOptions::mcap`: on sqlite3 input the
-    # MCAP writer options must be ignored (warn-and-ignore policy), and
-    # an empty McapWriteOptions{} must be a strict no-op.
+    # Contract test for `ConvertOptions::mcap`: on sqlite3 output the
+    # MCAP writer options must be ignored (warn-and-ignore policy
+    # gated on the output plugin), and an empty McapWriteOptions{}
+    # must be a strict no-op.
     ament_add_gtest(test_convert_mcap_options test/test_convert_mcap_options.cpp)
     target_link_libraries(test_convert_mcap_options ${PROJECT_NAME})
     target_compile_definitions(test_convert_mcap_options PRIVATE
+      "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
+
+    # Cross-format conversion regression: db3 -> mcap -> db3 round-trip
+    # must preserve the (topic, log_time, payload_size) multiset
+    # because the output plugin is now driven by the output path's
+    # extension. Covers both directions of the symmetry the user asked
+    # for in .docs/analysis.md §10.
+    ament_add_gtest(test_convert_cross_format test/test_convert_cross_format.cpp)
+    target_link_libraries(test_convert_cross_format ${PROJECT_NAME})
+    target_compile_definitions(test_convert_cross_format PRIVATE
       "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
   else()
     message(STATUS "Skipping test_convert_velodyne_vlp16: VLP16 ground-truth bag not found at ${_vlp16_bag}")

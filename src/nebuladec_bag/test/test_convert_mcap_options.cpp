@@ -13,12 +13,16 @@
 // limitations under the License.
 //
 // Contract test for `ConvertOptions::mcap`. The MCAP writer options
-// only take effect when the input bag is MCAP (`convert()` mirrors
-// the storage plugin on output). When the input is sqlite3 the
+// only take effect when the *output* bag is MCAP (`convert()` derives
+// the output storage plugin from the output path's extension for
+// bare-file outputs, and an unrecognised/absent extension falls back
+// to mirroring the input plugin). When the output is sqlite3 the
 // library is required to log a warning and silently ignore the
 // options. This test pins that behaviour against the existing VLP16
-// sqlite3 fixture: setting every MCAP option to a non-default value
-// must not change the conversion outcome.
+// sqlite3 fixture using an extensionless output path -- which falls
+// back to the input plugin, yielding a sqlite3 output -- so setting
+// every MCAP option to a non-default value must not change the
+// conversion outcome.
 
 #include "nebuladec_bag/bag_io.hpp"
 
@@ -68,15 +72,18 @@ ConvertOptions make_options(const fs::path & in_bag, const fs::path & out_path)
   return opts;
 }
 
-TEST(ConvertMcapOptions, Sqlite3InputIgnoresMcapOptions)
+TEST(ConvertMcapOptions, Sqlite3OutputIgnoresMcapOptions)
 {
   const fs::path bag_path = NEBULADEC_BAG_TEST_VLP16_BAG;
   ASSERT_TRUE(fs::exists(bag_path)) << bag_path;
+  // Extensionless output path -> output plugin falls back to the
+  // input plugin (sqlite3 here), so this exercises the sqlite3-output
+  // gate without needing to spell out a `.db3` extension.
   const auto out_path = make_tmp_dir("warn_ignore");
 
   auto opts = make_options(bag_path, out_path);
   // Set every MCAP knob to something obviously non-default. On a
-  // sqlite3 input these must be silently ignored (with a single
+  // sqlite3 output these must be silently ignored (with a single
   // WARN-level log line emitted by the library, which we do not
   // capture here -- the contract is "do not fail").
   opts.mcap.compression = McapCompression::kLz4;

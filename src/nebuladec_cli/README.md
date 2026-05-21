@@ -52,7 +52,7 @@ See [`nebuladec_bag/README.md`](../nebuladec_bag/README.md#performance-3-stage-p
 
 ### MCAP tuning
 
-`convert` mirrors the input bag's storage plugin on the output side, so these flags only take effect when the **input** bag is MCAP. On sqlite3 input the library emits a single warning and ignores them.
+`convert` drives the output storage plugin from the output path's extension (`.mcap` -> mcap, `.db3` -> sqlite3) for bare-file outputs, so these flags only take effect when the **output** bag is MCAP — including cross-format conversions like `.db3 -> .mcap`. On sqlite3 output the library emits a single warning and ignores them.
 
 - `--mcap-compression VALUE` — `none` | `lz4[:LEVEL]` | `zstd[:LEVEL]` (LEVEL is `fastest`/`fast`/`default`/`slow`/`slowest`). Default: writer plugin default (`zstd:default`).
 - `--mcap-chunk-size BYTES` — integer bytes, optional `K`/`M`/`G` suffix (binary SI: `K=1024`). Default: writer plugin default (~768 KiB).

@@ -27,6 +27,9 @@ node_modules/
 # Claude Code
 .claude/
 
+# Local-only docs (not for push)
+.docs/
+
 # clangd / editor caches
 .cache/
 

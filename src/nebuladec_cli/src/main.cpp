@@ -373,8 +373,10 @@ int run_convert(const ConvertCliOptions & opts)
     // the guard outlives convert() and cleans up the terminal even if
     // convert() throws.
     options.on_progress = ProgressBarGuard::make(opts.no_progress);
-    // MCAP writer tuning. Only honoured when the input bag is MCAP;
-    // the library warns and ignores them on sqlite3 input.
+    // MCAP writer tuning. Only honoured when the output bag is MCAP
+    // (the output path's extension drives the output plugin for
+    // bare-file outputs); the library warns and ignores them on
+    // sqlite3 output.
     parse_mcap_compression(opts.mcap_compression_raw, options.mcap);
     options.mcap.chunk_size_bytes = parse_chunk_size(opts.mcap_chunk_size_raw);
     const auto result = nebuladec::bag::convert(options);
@@ -457,16 +459,18 @@ int main(int argc, char ** argv)
     "automatically hidden when stdout is not a TTY (CI logs, pipes). "
     "Ignored under --dry-run.");
 
-  // MCAP writer tuning. Output mirrors the input storage plugin, so
-  // these flags only take effect when the input bag is MCAP; the
-  // library logs a warning and ignores them on sqlite3 input.
+  // MCAP writer tuning. The output storage plugin is driven by the
+  // output path's extension (.mcap / .db3) for bare-file outputs, so
+  // these flags only take effect when the output bag is MCAP. The
+  // library logs a warning and ignores them on sqlite3 output.
   convert->add_option(
     "--mcap-compression", opts.mcap_compression_raw,
     "MCAP output compression. Format: 'none' | 'lz4[:LEVEL]' | "
     "'zstd[:LEVEL]' where LEVEL is fastest|fast|default|slow|slowest. "
     "Examples: --mcap-compression none, --mcap-compression zstd:fast, "
     "--mcap-compression lz4. Default: writer plugin default (zstd / "
-    "default level). Ignored under --dry-run and when input is sqlite3.");
+    "default level). Ignored under --dry-run and when the output bag "
+    "is not .mcap.");
   convert->add_option(
     "--mcap-chunk-size", opts.mcap_chunk_size_raw,
     "MCAP output chunk size in bytes. Accepts an integer with optional "
@@ -474,7 +478,7 @@ int main(int argc, char ** argv)
     "--mcap-chunk-size 16777216. Larger chunks reduce the number of "
     "compression invocations on writer-bound workloads at the cost of "
     "extra memory per chunk. Default: writer plugin default (~768 KiB). "
-    "Ignored under --dry-run and when input is sqlite3.");
+    "Ignored under --dry-run and when the output bag is not .mcap.");
 
   // Flag matrix (mirrors prior hand-rolled behavior):
   //   --dry-run + no --config  -> inspect-style report

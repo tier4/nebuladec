@@ -1883,8 +1883,10 @@ ConvertResult dispatch_to_driver(
 
 /// Bare-file MCAP convert path that bypasses `rosbag2_cpp::Writer` so
 /// schema records can be sourced from the input bag's embedded
-/// definitions. Entered only when the input bag is MCAP, output mirrors
-/// it as a single file, and `registry` carries at least one definition.
+/// definitions. Entered only when both the input and output bags are
+/// MCAP, the output is a bare file, and `registry` carries at least
+/// one definition. Cross-format outputs (e.g. mcap -> db3) cannot use
+/// this path because the registry only carries MCAP Schema records.
 ConvertResult convert_via_definition_writer(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,
@@ -1950,19 +1952,23 @@ bool mcap_opts_set(const McapWriteOptions & o)
          o.compression_level != McapCompressionLevel::kAuto || o.chunk_size_bytes != 0U;
 }
 
-/// Apply the db3-input policy: if any MCAP option is set but the
-/// input is not MCAP, log a single warning and clear the options. The
-/// returned struct is what the rest of the pipeline should consult.
-McapWriteOptions resolve_mcap_opts(const std::string & input_storage_id, McapWriteOptions opts)
+/// Apply the MCAP-options policy: when any MCAP write option is set
+/// but the *output* storage plugin is not `mcap`, log a single warning
+/// and clear the options. With cross-format conversion (db3 ↔ mcap)
+/// the input plugin no longer dictates the output plugin -- the
+/// output extension does -- so the warning gate fires on the output
+/// side. The returned struct is what the rest of the pipeline
+/// consults.
+McapWriteOptions resolve_mcap_opts(const std::string & output_storage_id, McapWriteOptions opts)
 {
-  if (input_storage_id == "mcap" || !mcap_opts_set(opts)) {
+  if (output_storage_id == "mcap" || !mcap_opts_set(opts)) {
     return opts;
   }
   RCUTILS_LOG_WARN_NAMED(
     "nebuladec_bag",
-    "ignoring --mcap-compression / --mcap-chunk-size: input storage is '%s', not 'mcap' "
-    "(output mirrors input plugin, so MCAP writer options have no effect)",
-    input_storage_id.c_str());
+    "ignoring --mcap-compression / --mcap-chunk-size: output storage is '%s', not 'mcap' "
+    "(the MCAP writer options only apply when the output bag is MCAP)",
+    output_storage_id.c_str());
   return {};
 }
 
@@ -2085,6 +2091,25 @@ ConvertResult convert(const ConvertOptions & options)
   const fs::path final_output_path{options.output_path};
   const bool collapse_to_file = !in_spec.is_directory;
 
+  // Output storage plugin: for bare-file output, derive it from the
+  // output path's extension so users get cross-format conversion
+  // (`.db3 → .mcap`, `.mcap → .db3`) just by typing the right
+  // extension. Fall back to mirroring the input plugin when the
+  // extension is unrecognised (extensionless output names) or when the
+  // output is a directory (rosbag2 multi-file layouts stay on the
+  // input plugin -- changing plugin in directory mode is out of scope
+  // for this iteration). Same-format conversions (db3→db3 / mcap→mcap)
+  // remain byte-equivalent to the previous behaviour.
+  std::string out_storage_id;
+  if (collapse_to_file) {
+    out_storage_id = storage_id_from_extension(final_output_path);
+    if (out_storage_id.empty()) {
+      out_storage_id = in_spec.storage_id;
+    }
+  } else {
+    out_storage_id = in_spec.storage_id;
+  }
+
   // Schema-forwarding fast path: when the input bag carries embedded
   // message definitions and we are writing a bare-file MCAP, take the
   // definition-writer branch so unknown-but-embedded types make it
@@ -2092,17 +2117,21 @@ ConvertResult convert(const ConvertOptions & options)
   //
   //   * input must be MCAP -- only MCAP guarantees Schema records on
   //     the read side.
+  //   * output must be MCAP -- the registry only carries Schema
+  //     records, which only the MCAP container can store. Cross-format
+  //     output (db3) does not benefit from this fast path and goes
+  //     through the standard `rosbag2_cpp::Writer` below.
   //   * output must be bare-file -- the directory layout (multiple
   //     chunked mcaps + metadata.yaml) is out of scope for this fix.
   //   * registry must be non-empty -- otherwise the existing
   //     `rosbag2_cpp::Writer` path is byte-equivalent and we avoid
   //     touching well-tested code.
-  // Resolve MCAP write options. When the input is sqlite3 and the
+  // Resolve MCAP write options. When the *output* is not MCAP and the
   // user passed --mcap-* flags, warn-and-ignore so a mixed workflow
-  // (db3 in / db3 out) does not silently use unrelated knobs.
-  const auto mcap_opts = resolve_mcap_opts(in_spec.storage_id, options.mcap);
+  // (anything-in / db3-out) does not silently use unrelated knobs.
+  const auto mcap_opts = resolve_mcap_opts(out_storage_id, options.mcap);
 
-  if (in_spec.storage_id == "mcap" && collapse_to_file) {
+  if (in_spec.storage_id == "mcap" && out_storage_id == "mcap" && collapse_to_file) {
     auto registry = load_definition_registry(in_spec);
     if (!registry.empty()) {
       auto result = convert_via_definition_writer(
@@ -2130,7 +2159,7 @@ ConvertResult convert(const ConvertOptions & options)
     rosbag2_cpp::Writer rb2_writer;
     rosbag2_storage::StorageOptions out_opts;
     out_opts.uri = writer_uri.string();
-    out_opts.storage_id = in_spec.storage_id;  // mirror input plugin
+    out_opts.storage_id = out_storage_id;  // driven by output extension
     if (!storage_cfg.path().empty()) {
       out_opts.storage_config_uri = storage_cfg.path();
     }
@@ -2145,7 +2174,7 @@ ConvertResult convert(const ConvertOptions & options)
   // Phase 4: collapse scratch -> bare file for bare-file inputs, then
   // return the result.
   if (collapse_to_file) {
-    collapse_scratch_to_bare_file(writer_uri, final_output_path, in_spec.storage_id);
+    collapse_scratch_to_bare_file(writer_uri, final_output_path, out_storage_id);
   }
   return result;
 }
