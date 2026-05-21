@@ -1883,8 +1883,10 @@ ConvertResult dispatch_to_driver(
 
 /// Bare-file MCAP convert path that bypasses `rosbag2_cpp::Writer` so
 /// schema records can be sourced from the input bag's embedded
-/// definitions. Entered only when the input bag is MCAP, output mirrors
-/// it as a single file, and `registry` carries at least one definition.
+/// definitions. Entered only when both the input and output bags are
+/// MCAP, the output is a bare file, and `registry` carries at least
+/// one definition. Cross-format outputs (e.g. mcap -> db3) cannot use
+/// this path because the registry only carries MCAP Schema records.
 ConvertResult convert_via_definition_writer(
   rosbag2_cpp::Reader & reader, const std::vector<ResolvedRule> & decoded_rules,
   const std::unordered_set<std::string> & decoded_topic_names,

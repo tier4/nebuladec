@@ -124,7 +124,13 @@ nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --se
 # Suppress the live progress bar (e.g. CI logs, pipes -- auto-hidden on non-TTY too).
 nebuladec convert path/to/input_bag -o path/to/output_bag -c config/x2.yaml --no-progress
 
-# MCAP writer tuning (input must be .mcap; ignored with a warning on .db3 input).
+# Cross-format conversion: the output storage plugin is driven by the output
+# path's extension (.mcap / .db3) for bare-file outputs, so .db3 -> .mcap and
+# .mcap -> .db3 round-trips work transparently.
+nebuladec convert path/to/input.db3 -o path/to/output.mcap -c config/x2.yaml
+nebuladec convert path/to/input.mcap -o path/to/output.db3 -c config/x2.yaml
+
+# MCAP writer tuning (output must be .mcap; ignored with a warning on .db3 output).
 # Loosen compression for ~1.5-2.3x faster wall-clock at +5-9% file size.
 nebuladec convert path/to/input.mcap -o path/to/output.mcap -c config/x2.yaml --mcap-compression zstd:fast
 nebuladec convert path/to/input.mcap -o path/to/output.mcap -c config/x2.yaml --mcap-compression none

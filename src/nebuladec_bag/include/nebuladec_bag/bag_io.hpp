@@ -103,11 +103,14 @@ struct ProgressEvent
 
 /// @brief Output-side MCAP writer tuning.
 ///
-/// `convert()` mirrors the input bag's storage plugin on the output
-/// side, so these options only take effect when the input bag is MCAP.
-/// When the input is sqlite3 (`.db3`) `convert()` emits a single
-/// warning and ignores the options -- this keeps the CLI's MCAP flags
-/// harmless against a mixed workflow.
+/// The output storage plugin is driven by the output path's extension
+/// (`.mcap` -> mcap, `.db3` -> sqlite3) for bare-file outputs, so these
+/// options take effect whenever the output bag is MCAP -- including
+/// cross-format conversions like `.db3 -> .mcap`. When the output is
+/// not MCAP (sqlite3 output, or a directory output that mirrors a
+/// sqlite3 input), `convert()` emits a single warning and ignores the
+/// options -- this keeps the CLI's MCAP flags harmless against a mixed
+/// workflow.
 ///
 /// `kAuto` means "do not override; let the writer use its own
 /// default". The library never enforces a specific value -- defaults
@@ -169,9 +172,9 @@ struct ConvertOptions
   bool sequential{false};
   std::size_t workers{0};
   std::function<void(const ProgressEvent &)> on_progress{};
-  /// Output-side MCAP writer tuning. Honoured only when the input bag
-  /// (and therefore the output bag) is MCAP; ignored with a single
-  /// warning on sqlite3 input.
+  /// Output-side MCAP writer tuning. Honoured only when the output
+  /// bag is MCAP (driven by the output path's extension for bare-file
+  /// outputs); ignored with a single warning on sqlite3 output.
   McapWriteOptions mcap{};
 };
 
@@ -236,8 +239,17 @@ std::vector<ConvertPlanEntry> plan_convert(
 /// resolved PointCloud2 topics to `options.output_path`. Every other
 /// topic in the input bag (unmatched packet topics, unsupported-vendor
 /// packet topics, TF, IMU, camera streams, ...) is preserved verbatim in
-/// the output bag. The output bag uses the same storage plugin and
-/// file/directory layout as the input.
+/// the output bag.
+///
+/// The output bag's file-vs-directory **layout** mirrors the input
+/// (bare-file in -> bare-file out, directory in -> directory out).
+/// The output **storage plugin** is driven by the output path's
+/// extension for bare-file outputs (`.mcap` -> mcap, `.db3` -> sqlite3),
+/// enabling cross-format conversion (`.db3 <-> .mcap`); same-format
+/// outputs (`.db3 -> .db3`, `.mcap -> .mcap`) are byte-equivalent to a
+/// plugin-mirror. Bare-file outputs with an unrecognised or absent
+/// extension fall back to mirroring the input plugin, and directory
+/// outputs always mirror the input plugin.
 ///
 /// Throws `std::runtime_error` when a single in-topic matches multiple
 /// rules (ambiguous config).

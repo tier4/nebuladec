@@ -123,9 +123,10 @@ if(BUILD_TESTING)
     target_compile_definitions(test_convert_workers_one PRIVATE
       "NEBULADEC_BAG_TEST_VLP16_BAG=\"${_vlp16_bag}\"")
 
-    # Contract test for `ConvertOptions::mcap`: on sqlite3 input the
-    # MCAP writer options must be ignored (warn-and-ignore policy), and
-    # an empty McapWriteOptions{} must be a strict no-op.
+    # Contract test for `ConvertOptions::mcap`: on sqlite3 output the
+    # MCAP writer options must be ignored (warn-and-ignore policy
+    # gated on the output plugin), and an empty McapWriteOptions{}
+    # must be a strict no-op.
     ament_add_gtest(test_convert_mcap_options test/test_convert_mcap_options.cpp)
     target_link_libraries(test_convert_mcap_options ${PROJECT_NAME})
     target_compile_definitions(test_convert_mcap_options PRIVATE
