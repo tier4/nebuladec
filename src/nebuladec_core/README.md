@@ -15,13 +15,13 @@ any Nebula decoders — point-cloud reconstruction belongs to
 
 ## Public headers (`include/nebuladec_core/`)
 
-| Header                 | Purpose                                                                                                                                                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `identity.hpp`         | The `Vendor` enum (HESAI / VELODYNE / ROBOSENSE / CONTINENTAL) and the `Identity` struct that carries the identification result (vendor, `SensorModel`, `ReturnMode`, confidence). Also declares `to_string(Vendor)`. |
-| `any_decoder.hpp`      | The pure-virtual `AnyDecoder` interface: `feed()` (raw bytes → optional point cloud) and `flush()` (drain the trailing scan). Implementations live in `nebuladec_adapters`.                                                                                  |
-| `packet_sniffer.hpp`   | The stateless `PacketSniffer::identify(data, size, vendor_hint)`. Infers vendor, model, and return mode from a single packet.                                                                                                                                |
-| `support_registry.hpp` | The Meyers singleton `SupportRegistry`: `check()`, `is_vendor_supported()`, `is_model_supported()`, `supported_vendors()`. Defines the `SupportLevel` enum and `SupportDecision`.                                                                            |
-| `topic_mapping.hpp`    | The YAML-driven `TopicMapping`. Resolves an input topic to an output topic and `frame_id` via `<placeholder>` patterns. Exposes `from_yaml_file()`, `from_yaml_string()`, `resolve()`, `MappingRule`, and `MappingMatch`.                                    |
+| Header                 | Purpose                                                                                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity.hpp`         | The `Vendor` enum (HESAI / VELODYNE / ROBOSENSE / CONTINENTAL) and the `Identity` struct that carries the identification result (vendor, `SensorModel`, `ReturnMode`, confidence). Also declares `to_string(Vendor)`.     |
+| `any_decoder.hpp`      | The pure-virtual `AnyDecoder` interface: `feed()` (raw bytes → optional point cloud) and `flush()` (drain the trailing scan). Implementations live in `nebuladec_adapters`.                                               |
+| `packet_sniffer.hpp`   | The stateless `PacketSniffer::identify(data, size, vendor_hint)`. Infers vendor, model, and return mode from a single packet.                                                                                             |
+| `support_registry.hpp` | The Meyers singleton `SupportRegistry`: `check()`, `is_vendor_supported()`, `is_model_supported()`, `supported_vendors()`. Defines the `SupportLevel` enum and `SupportDecision`.                                         |
+| `topic_mapping.hpp`    | The YAML-driven `TopicMapping`. Resolves an input topic to an output topic and `frame_id` via `<placeholder>` patterns. Exposes `from_yaml_file()`, `from_yaml_string()`, `resolve()`, `MappingRule`, and `MappingMatch`. |
 
 ## Implementation (`src/`)
 
