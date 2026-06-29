@@ -13,8 +13,16 @@
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
+  <!-- point_types.hpp / nebula_common.hpp appear in this package's public
+       headers (any_decoder.hpp, identity.hpp), so this stays exported. -->
   <depend>nebula_core_common</depend>
-  <depend>yaml_cpp_vendor</depend>
+
+  <!-- yaml-cpp is used only in the .cpp sources and linked into the library;
+       it is not exposed in any public header. Declared as build plus exec
+       dependencies instead of an exported one, so it is not re-exported to
+       downstream packages. -->
+  <build_depend>yaml_cpp_vendor</build_depend>
+  <exec_depend>yaml_cpp_vendor</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>

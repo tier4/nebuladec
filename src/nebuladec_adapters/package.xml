@@ -13,12 +13,24 @@
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>ament_index_cpp</depend>
-  <depend>nebula_hesai_common</depend>
-  <depend>nebula_hesai_decoders</depend>
-  <depend>nebula_velodyne_common</depend>
-  <depend>nebula_velodyne_decoders</depend>
+  <!-- nebuladec_core types appear in this package's public headers
+       (any_decoder.hpp, identity.hpp), so it stays an exported dependency. -->
   <depend>nebuladec_core</depend>
+
+  <!-- The vendor drivers and ament_index_cpp are used only in the .cpp
+       sources, never in public headers. Declared build + exec so the heavy
+       Hesai/Velodyne decoder headers are not re-exported to downstream
+       packages (e.g. nebuladec_bag), which never include them directly. -->
+  <build_depend>ament_index_cpp</build_depend>
+  <build_depend>nebula_hesai_common</build_depend>
+  <build_depend>nebula_hesai_decoders</build_depend>
+  <build_depend>nebula_velodyne_common</build_depend>
+  <build_depend>nebula_velodyne_decoders</build_depend>
+  <exec_depend>ament_index_cpp</exec_depend>
+  <exec_depend>nebula_hesai_common</exec_depend>
+  <exec_depend>nebula_hesai_decoders</exec_depend>
+  <exec_depend>nebula_velodyne_common</exec_depend>
+  <exec_depend>nebula_velodyne_decoders</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
