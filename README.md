@@ -91,8 +91,8 @@ source /opt/ros/${ROS_DISTRO}/setup.bash
 Under the hood it runs
 `colcon build --symlink-install --packages-up-to nebuladec_cli` and afterwards
 merges the per-package `compile_commands.json` files into a single
-`build/compile_commands.json` — tools like clang-tidy expect a single
-workspace-level compilation database.
+`build/compile_commands.json` — editors and language servers (clangd, IDEs)
+expect a single workspace-level compilation database.
 
 After a `-c` clean build, the script automatically strips stale
 `${WORKSPACE}/install/...` entries from `AMENT_PREFIX_PATH`,
