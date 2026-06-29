@@ -251,8 +251,7 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> HesaiAdapter::flush()
   // in that case the driver's internal buffer holds only that one
   // packet's points and replaying first-scan packets would synthesise
   // a spurious cloud (mostly first-scan data) on top of the already-
-  // emitted real scan. Mirrors SeyondAdapter's last_feed_scan_complete_
-  // guard.
+  // emitted real scan.
   if (!driver_ || first_scan_packets_.empty() || last_feed_emitted_) {
     return std::nullopt;
   }

@@ -1,7 +1,7 @@
 # nebuladec_adapters
 
 A thin adapter layer that wraps Nebula's vendor-specific decoders (Hesai,
-Velodyne, Seyond) behind the `AnyDecoder` interface from `nebuladec_core`.
+Velodyne) behind the `AnyDecoder` interface from `nebuladec_core`.
 The top-level `Decoder` facade auto-identifies the vendor from a stream of
 raw packets, lazily instantiates the matching adapter, caches it, and
 returns point clouds.
@@ -13,9 +13,8 @@ returns point clouds.
 | `decoder.hpp`          | The SDK facade for this package. Declares `class Decoder` (auto-routing, vendor sniffing, min-point filter, `flush()`) and the free factory function `make_adapter(const Identity&)`. |
 | `hesai_adapter.hpp`    | `HesaiAdapter` — wraps `nebula::drivers::HesaiDriver`.                                                                                                                                |
 | `velodyne_adapter.hpp` | `VelodyneAdapter` — wraps `nebula::drivers::VelodyneDriver`.                                                                                                                          |
-| `seyond_adapter.hpp`   | `SeyondAdapter` — wraps `nebula::drivers::SeyondDecoder`.                                                                                                                             |
 
-All three adapters inherit from `nebuladec_core::AnyDecoder` and implement
+Both adapters inherit from `nebuladec_core::AnyDecoder` and implement
 `feed`, `flush`, and `identity`.
 
 ## Support matrix
@@ -24,7 +23,6 @@ All three adapters inherit from `nebuladec_core::AnyDecoder` and implement
 | ----------------- | --------------------------------- | ------------------------------------------------------------------- |
 | `HesaiAdapter`    | `nebula::drivers::HesaiDriver`    | Hesai (Pandar40P, PandarXT32, Pandar64, etc.)                       |
 | `VelodyneAdapter` | `nebula::drivers::VelodyneDriver` | Velodyne (VLP16, VLP32, VLS128, etc.)                               |
-| `SeyondAdapter`   | `nebula::drivers::SeyondDecoder`  | Seyond                                                              |
 | _(no adapter)_    | —                                 | Robosense — identified by the sniffer, not decoded to PointCloud2   |
 | _(no adapter)_    | —                                 | Continental — identified by the sniffer, not decoded to PointCloud2 |
 
@@ -55,12 +53,11 @@ themselves safe to share across threads. See
 ## Implementation (`src/`)
 
 - `decoder.cpp` — The `Decoder` class (`feed/flush/identity/set_vendor_hint/set_min_points`) and the `make_adapter` factory.
-- `hesai_adapter.cpp`, `velodyne_adapter.cpp`, `seyond_adapter.cpp` — Per-vendor adapter shims.
-- `seyond_decoder.{hpp,cpp}` — Private composition wrapper `nebuladec::adapters::SeyondDecoder` (shares the class name with `nebula::drivers::SeyondDecoder` but is namespace-disambiguated and only consumed from `seyond_adapter.cpp`). Inspects each packet before forwarding; on the first `angle_hv_table` packet (`type=100/101/103/104`) it strips the 70-byte header and rebuilds the inner `nebula::drivers::SeyondDecoder` once with the recovered calibration. Subsequent `angle_hv_table` packets are ignored. This makes offline replay of RobinW / RobinE1X / RobinE2X / HummingbirdD1 streams decode correctly without an external `calibration_file`.
+- `hesai_adapter.cpp`, `velodyne_adapter.cpp` — Per-vendor adapter shims.
 
 ## Tests (`test/`)
 
-- `test_decoder.cpp` — `Decoder` identity lifecycle, garbage-packet tolerance, Seyond routing, `min_points` getter/setter, and `make_adapter` behavior for Seyond and unknown vendors.
+- `test_decoder.cpp` — `Decoder` identity lifecycle, garbage-packet tolerance, `min_points` getter/setter, and `make_adapter` behavior for unknown vendors.
 - `test_hesai_adapter.cpp` — `is_ready()` smoke tests for every Hesai
   model the adapter exposes (Pandar40P, Pandar64, PandarQT64,
   PandarQT128, PandarXT16, PandarXT32, PandarXT32M, PandarAT128,
@@ -70,9 +67,8 @@ themselves safe to share across threads. See
   `HesaiDecoder<SensorT>` instantiation path with the bundled
   calibration.
 - `test_velodyne_adapter.cpp` — `is_ready()` for VLP16 and VLS128, rejection of UNKNOWN model, and empty-packet safety.
-- `test_decoder_integration.cpp` — End-to-end Sniffer → `make_adapter` → `AnyDecoder::feed`. Realistic byte sequences for Hesai Pandar40P, Velodyne VLP16, Seyond, and Robosense (Helios, BpearlV3). Confirms Robosense and garbage produce no point clouds.
-- `test_decoder_concurrency.cpp` — Stress tests for the per-instance thread-safety contract: a shared `PacketSniffer` and `SupportRegistry::instance()` driven from 4 threads, 4 independent per-thread Seyond `Decoder`s, and 4 mixed-vendor (Seyond / Hesai / Velodyne) `Decoder`s constructed and fed concurrently. Catches races in calibration loading and in the package-share-dir lookup that `make_adapter` performs.
-- `test_seyond_decoder.cpp` — Unit tests for the private `nebuladec::adapters::SeyondDecoder` wrapper. Covers angle_hv_table detection by magic + type, rejection of undersized / wrong-magic / non-angle_hv packets, malformed `common.size` not latching the applied flag (allowing a later well-formed packet to apply), repeated angle_hv packets accepted, and mid-stream rebuild leaving the wrapper usable for subsequent forwarding.
+- `test_decoder_integration.cpp` — End-to-end Sniffer → `make_adapter` → `AnyDecoder::feed`. Realistic byte sequences for Hesai Pandar40P, Velodyne VLP16, and Robosense (Helios, BpearlV3). Confirms Robosense and garbage produce no point clouds.
+- `test_decoder_concurrency.cpp` — Stress tests for the per-instance thread-safety contract: a shared `PacketSniffer` and `SupportRegistry::instance()` driven from 4 threads, 4 independent per-thread `Decoder`s, and 4 mixed-vendor (Velodyne / Hesai) `Decoder`s constructed and fed concurrently. Catches races in calibration loading and in the package-share-dir lookup that `make_adapter` performs.
 
 ## Dependencies
 
@@ -81,14 +77,13 @@ themselves safe to share across threads. See
 - `buildtool_depend`: `ament_cmake_auto`
 - `depend`: `ament_index_cpp`, `nebuladec_core`,
   `nebula_hesai_common`, `nebula_hesai_decoders`,
-  `nebula_seyond_common`, `nebula_seyond_decoders`,
   `nebula_velodyne_common`, `nebula_velodyne_decoders`
 - `test_depend`: `ament_cmake_gtest`, `ament_lint_auto`, `ament_lint_common`
 
 ## Build artifacts
 
-- Shared library `nebuladec_adapters` (five source files). Public includes exported via `include/`.
-- Test executables: `test_decoder`, `test_hesai_adapter`, `test_velodyne_adapter`, `test_decoder_integration`, `test_decoder_concurrency`, `test_seyond_decoder`.
+- Shared library `nebuladec_adapters` (three source files). Public includes exported via `include/`.
+- Test executables: `test_decoder`, `test_hesai_adapter`, `test_velodyne_adapter`, `test_decoder_integration`, `test_decoder_concurrency`.
 - `ament_cmake_uncrustify` is suppressed — formatting is enforced by clang-format via pre-commit.
 - CMake option `NEBULADEC_PROFILE` (default `OFF`) mirrors the same
   option on `nebuladec_core`. When `ON`, the adapter's `feed` paths and

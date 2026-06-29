@@ -56,15 +56,6 @@ std::vector<std::uint8_t> make_velodyne_vlp16_packet()
   return pkt;
 }
 
-std::vector<std::uint8_t> make_seyond_stub_packet(std::size_t size = 512)
-{
-  std::vector<std::uint8_t> pkt(size, 0);
-  pkt[0] = 0x6A;   // magic_number low  (uint16 LE == 0x176A)
-  pkt[1] = 0x17;   // magic_number high
-  pkt[38] = 0x01;  // type:8 == sphere_pointcloud (SeyondDataPacket data frame)
-  return pkt;
-}
-
 std::vector<std::uint8_t> make_robosense_helios_msop_packet()
 {
   std::vector<std::uint8_t> pkt(1248, 0);
@@ -120,16 +111,6 @@ TEST(DecoderIntegration, VelodyneVLP16IsIdentifiedAndRouted)
   EXPECT_EQ(decoder.identity()->model, nebula::drivers::SensorModel::VELODYNE_VLP16);
 }
 
-// --- Seyond -------------------------------------------------------------
-
-TEST(DecoderIntegration, SeyondIsIdentifiedAndRouted)
-{
-  Decoder decoder;
-  (void)decoder.feed(make_seyond_stub_packet(), 0.0);
-  ASSERT_TRUE(decoder.identity().has_value());
-  EXPECT_EQ(decoder.identity()->vendor, Vendor::SEYOND);
-}
-
 // --- Robosense (identified, not decoded) --------------------------------
 
 TEST(DecoderIntegration, RobosenseHeliosMsopIsIdentifiedButNotDecoded)
@@ -175,7 +156,7 @@ TEST(DecoderIntegration, MixedVendorStreamLocksOnFirstMatch)
   // are still forwarded to the selected adapter (which will likely drop
   // them). The identity must not flap on every packet.
   Decoder decoder;
-  (void)decoder.feed(make_seyond_stub_packet(), 0.0);
+  (void)decoder.feed(make_velodyne_vlp16_packet(), 0.0);
   ASSERT_TRUE(decoder.identity().has_value());
   const auto first = decoder.identity()->vendor;
   (void)decoder.feed(make_hesai_pandar40p_packet(), 0.1);

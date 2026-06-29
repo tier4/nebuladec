@@ -78,7 +78,7 @@ private:
   /// and its internal buffer holds only that one cut-triggering packet
   /// -- replaying first-scan packets in flush() would synthesise a
   /// spurious cloud (mostly first-scan data) on top of the already-
-  /// emitted real scan. Mirrors SeyondAdapter::last_feed_scan_complete_.
+  /// emitted real scan.
   bool last_feed_emitted_{false};
 };
 

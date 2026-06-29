@@ -82,7 +82,7 @@ intensity, return_type, channel, azimuth, elevation, distance, time_stamp).
   - `PandarScanSource` — `pandar_msgs/msg/PandarScan` (respects `p.size` to trim oversized arrays).
   - `VelodyneScanSource` — `velodyne_msgs/msg/VelodyneScan`.
   - `RobosenseScanSource` — `robosense_msgs/msg/RobosenseScan`.
-  - `vendor_from_message_type`: Pandar → HESAI, Velodyne → VELODYNE, Robosense → ROBOSENSE, NebulaPackets → UNKNOWN (Seyond and Continental share that type, so payload sniffing is required).
+  - `vendor_from_message_type`: Pandar → HESAI, Velodyne → VELODYNE, Robosense → ROBOSENSE, NebulaPackets → UNKNOWN (a generic container, e.g. Continental radar, so payload sniffing is required).
 
 - **`point_cloud2.cpp`** — `memcpy`s the `NebulaPoint` buffer directly and builds the `PointCloud2` with `point_step = sizeof(NebulaPoint)`.
 
@@ -264,7 +264,7 @@ user-supplied `TopicMapping` YAML says. Examples used in the tests:
 
 The recognized ROS message types are:
 
-- `nebula_msgs/msg/NebulaPackets` (Seyond LiDAR / Continental radar)
+- `nebula_msgs/msg/NebulaPackets` (Continental radar)
 - `pandar_msgs/msg/PandarScan` (Hesai)
 - `velodyne_msgs/msg/VelodyneScan` (Velodyne)
 - `robosense_msgs/msg/RobosenseScan` (Robosense — identified but not decoded to PointCloud2)

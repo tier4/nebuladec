@@ -24,7 +24,6 @@ namespace
 {
 
 using nebula::drivers::SensorModel;
-using nebula::drivers::SeyondSensorModel;
 
 const SupportRegistry & registry()
 {
@@ -39,7 +38,6 @@ TEST(SupportRegistry, DecodedLidarVendorsAreSupported)
 {
   EXPECT_TRUE(registry().is_vendor_supported(Vendor::HESAI));
   EXPECT_TRUE(registry().is_vendor_supported(Vendor::VELODYNE));
-  EXPECT_TRUE(registry().is_vendor_supported(Vendor::SEYOND));
 }
 
 TEST(SupportRegistry, RobosenseIsIdentifiedButNotDecoded)
@@ -76,33 +74,6 @@ TEST(SupportRegistry, HesaiUnknownModelIsNotSupported)
   Identity id;
   id.vendor = Vendor::HESAI;
   id.model = SensorModel::UNKNOWN;
-  EXPECT_FALSE(registry().is_model_supported(id));
-}
-
-TEST(SupportRegistry, SeyondKnownModelIsSupported)
-{
-  Identity id;
-  id.vendor = Vendor::SEYOND;
-  id.seyond_model = SeyondSensorModel::FALCON_K;
-  EXPECT_TRUE(registry().is_model_supported(id));
-}
-
-TEST(SupportRegistry, SeyondMissingModelIsNotSupported)
-{
-  Identity id;
-  id.vendor = Vendor::SEYOND;
-  // seyond_model left unset.
-  EXPECT_FALSE(registry().is_model_supported(id));
-}
-
-TEST(SupportRegistry, SeyondSensorModelIgnoresSensorModel)
-{
-  // Seyond always carries SensorModel::UNKNOWN; the side-enum is what
-  // matters. A SensorModel match on SEYOND must NOT count.
-  Identity id;
-  id.vendor = Vendor::SEYOND;
-  id.model = SensorModel::HESAI_PANDARQT128;  // nonsense for seyond
-  id.seyond_model = std::nullopt;
   EXPECT_FALSE(registry().is_model_supported(id));
 }
 
@@ -153,23 +124,6 @@ TEST(SupportRegistryCheck, FullySupportedPairReturnsSupported)
   EXPECT_TRUE(d.reason.empty());
 }
 
-TEST(SupportRegistryCheck, SeyondSupportedSeyondModelReturnsSupported)
-{
-  Identity id;
-  id.vendor = Vendor::SEYOND;
-  id.seyond_model = SeyondSensorModel::ROBIN_W;
-  const auto d = registry().check(id);
-  EXPECT_EQ(d.level, SupportLevel::Supported);
-}
-
-TEST(SupportRegistryCheck, SeyondWithoutSeyondModelIsModelNotSupported)
-{
-  Identity id;
-  id.vendor = Vendor::SEYOND;
-  const auto d = registry().check(id);
-  EXPECT_EQ(d.level, SupportLevel::ModelNotSupported);
-}
-
 // --------------------------------------------------------------------------
 // supported_vendors
 // --------------------------------------------------------------------------
@@ -177,7 +131,7 @@ TEST(SupportRegistryCheck, SeyondWithoutSeyondModelIsModelNotSupported)
 TEST(SupportRegistry, SupportedVendorListCoversDecodedLidarVendors)
 {
   const auto & list = registry().supported_vendors();
-  EXPECT_EQ(list.size(), 3U);
+  EXPECT_EQ(list.size(), 2U);
   // CONTINENTAL, ROBOSENSE, and UNKNOWN must not appear (identified
   // vendors that lack a PointCloud2 adapter are excluded).
   for (auto v : list) {

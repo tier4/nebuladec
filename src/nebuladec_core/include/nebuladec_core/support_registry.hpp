@@ -100,12 +100,8 @@ private:
   struct VendorSupport
   {
     Vendor vendor;
-    /// Models decoded through `SensorModel`. Empty when the vendor
-    /// identifies models through a separate enum (e.g. Seyond).
+    /// Models decoded through `SensorModel`.
     std::vector<nebula::drivers::SensorModel> sensor_models;
-    /// Models decoded through `SeyondSensorModel`. Only populated for
-    /// Vendor::SEYOND; other vendors leave this empty.
-    std::vector<nebula::drivers::SeyondSensorModel> seyond_models;
   };
 
   std::vector<VendorSupport> vendors_;

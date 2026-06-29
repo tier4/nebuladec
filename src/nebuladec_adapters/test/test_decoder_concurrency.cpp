@@ -49,15 +49,6 @@ namespace
 
 // Synthetic packets mirroring the helpers in test_decoder_integration.cpp.
 // Kept private to this TU so the two test executables remain decoupled.
-std::vector<std::uint8_t> seyond_stub_packet()
-{
-  std::vector<std::uint8_t> pkt(512, 0);
-  pkt[0] = 0x6A;
-  pkt[1] = 0x17;
-  pkt[38] = 0x01;
-  return pkt;
-}
-
 std::vector<std::uint8_t> hesai_pandar40p_packet()
 {
   std::vector<std::uint8_t> pkt(1256, 0);
@@ -89,7 +80,7 @@ constexpr int k_packets_per_thread = 200;
 TEST(DecoderConcurrency, SinglePacketSnifferSharedAcrossThreads)
 {
   PacketSniffer sniffer;
-  const auto pkt = seyond_stub_packet();
+  const auto pkt = velodyne_vlp16_packet();
   std::vector<std::thread> workers;
   std::atomic<int> hits{0};
   workers.reserve(k_threads);
@@ -97,7 +88,7 @@ TEST(DecoderConcurrency, SinglePacketSnifferSharedAcrossThreads)
     workers.emplace_back([&]() {
       for (int i = 0; i < k_packets_per_thread; ++i) {
         const auto id = sniffer.identify(pkt);
-        if (id && id->vendor == Vendor::SEYOND) {
+        if (id && id->vendor == Vendor::VELODYNE) {
           hits.fetch_add(1, std::memory_order_relaxed);
         }
       }
@@ -120,7 +111,7 @@ TEST(DecoderConcurrency, SupportRegistrySharedAcrossThreads)
   for (int t = 0; t < k_threads; ++t) {
     workers.emplace_back([&]() {
       for (int i = 0; i < k_packets_per_thread; ++i) {
-        if (SupportRegistry::instance().is_vendor_supported(Vendor::SEYOND)) {
+        if (SupportRegistry::instance().is_vendor_supported(Vendor::VELODYNE)) {
           supported.fetch_add(1, std::memory_order_relaxed);
         }
       }
@@ -135,12 +126,12 @@ TEST(DecoderConcurrency, SupportRegistrySharedAcrossThreads)
 // Each thread owns its own Decoder; the contract is that distinct
 // instances do not interfere. Identity must resolve correctly per
 // stream and the call must not race on the shared support registry.
-TEST(DecoderConcurrency, PerThreadSeyondDecodersAreIndependent)
+TEST(DecoderConcurrency, PerThreadDecodersAreIndependent)
 {
   std::vector<std::thread> workers;
   std::vector<std::optional<Identity>> ids(k_threads);
   workers.reserve(k_threads);
-  const auto pkt = seyond_stub_packet();
+  const auto pkt = velodyne_vlp16_packet();
   for (int t = 0; t < k_threads; ++t) {
     workers.emplace_back([&, t]() {
       Decoder decoder;
@@ -155,7 +146,7 @@ TEST(DecoderConcurrency, PerThreadSeyondDecodersAreIndependent)
   }
   for (int t = 0; t < k_threads; ++t) {
     ASSERT_TRUE(ids[t].has_value()) << "thread " << t;
-    EXPECT_EQ(ids[t]->vendor, Vendor::SEYOND) << "thread " << t;
+    EXPECT_EQ(ids[t]->vendor, Vendor::VELODYNE) << "thread " << t;
   }
 }
 
@@ -166,10 +157,11 @@ TEST(DecoderConcurrency, PerThreadSeyondDecodersAreIndependent)
 TEST(DecoderConcurrency, MixedVendorDecodersAreIndependent)
 {
   const std::vector<std::vector<std::uint8_t>> packets = {
-    seyond_stub_packet(), hesai_pandar40p_packet(), velodyne_vlp16_packet(), seyond_stub_packet()};
+    velodyne_vlp16_packet(), hesai_pandar40p_packet(), velodyne_vlp16_packet(),
+    hesai_pandar40p_packet()};
   ASSERT_EQ(packets.size(), static_cast<std::size_t>(k_threads));
   const std::vector<Vendor> expected_vendors = {
-    Vendor::SEYOND, Vendor::HESAI, Vendor::VELODYNE, Vendor::SEYOND};
+    Vendor::VELODYNE, Vendor::HESAI, Vendor::VELODYNE, Vendor::HESAI};
 
   std::vector<std::thread> workers;
   std::vector<std::optional<Identity>> ids(k_threads);

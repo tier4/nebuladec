@@ -50,8 +50,8 @@ InputSpec detect_input(const std::string & path);
 /// `inspect()` only reads the first packet message per topic, so callers
 /// get vendor + model quickly without walking the whole bag. Vendor is
 /// always derived from the sniffed model, never from the ROS 2 message
-/// type -- `nebula_msgs/NebulaPackets` is shared by Seyond and
-/// Continental, so the type alone does not pin down a vendor. Topics
+/// type -- `nebula_msgs/NebulaPackets` is a generic container (e.g.
+/// Continental radar), so the type alone does not pin down a vendor. Topics
 /// with zero ROS messages in the bag are reported with `message_count=0`
 /// and `identity` unset; `inspect()`'s own CLI filters those out, but
 /// `plan_convert()` surfaces them so the dry-run table can explain

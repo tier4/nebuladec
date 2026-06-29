@@ -57,7 +57,7 @@ See [`nebuladec_bag/README.md`](../nebuladec_bag/README.md#performance-3-stage-p
 - `--mcap-compression VALUE` — `none` | `lz4[:LEVEL]` | `zstd[:LEVEL]` (LEVEL is `fastest`/`fast`/`default`/`slow`/`slowest`). Default: writer plugin default (`zstd:default`).
 - `--mcap-chunk-size BYTES` — integer bytes, optional `K`/`M`/`G` suffix (binary SI: `K=1024`). Default: writer plugin default (~768 KiB).
 
-Choosing a value is a wall-clock vs file-size trade. Measured on a 2.5 GB Seyond bag (FalconK + RobinW, 600 messages) writing to a local NVMe (lower `real` is faster, output sizes shown for context):
+Choosing a value is a wall-clock vs file-size trade. Measured on a 2.5 GB bag (600 messages) writing to a local NVMe (lower `real` is faster, output sizes shown for context):
 
 | `--mcap-compression`       | real (avg, 3 runs) | output size | vs default |
 | -------------------------- | ------------------ | ----------- | ---------- |
