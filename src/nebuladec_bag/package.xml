@@ -13,26 +13,44 @@
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
-  <depend>libsqlite3-dev</depend>
-  <depend>mcap_vendor</depend>
-  <depend>nebula_msgs</depend>
+  <!-- nebuladec_adapters, rclcpp (rclcpp::Time) and sensor_msgs (PointCloud2)
+       appear in this package's public headers (bag_io.hpp, point_cloud2.hpp),
+       so they stay exported dependencies. -->
   <depend>nebuladec_adapters</depend>
-  <depend>pandar_msgs</depend>
   <depend>rclcpp</depend>
-  <depend>robosense_msgs</depend>
-  <depend>rosbag2_cpp</depend>
-  <depend>rosbag2_storage</depend>
   <depend>sensor_msgs</depend>
-  <depend>velodyne_msgs</depend>
-  <depend>yaml-cpp</depend>
+
+  <!-- The dependencies below are used only in the .cpp sources: the storage
+       backends (sqlite / libmcap), the rosbag2 reader and writer, the vendor
+       scan messages decoded in packet_source.cpp, and yaml. None appear in a
+       public header, so they are declared as build plus exec dependencies
+       instead of exported ones, to avoid re-exporting them to the build of
+       downstream packages such as nebuladec_cli. -->
+  <build_depend>libsqlite3-dev</build_depend>
+  <build_depend>mcap_vendor</build_depend>
+  <build_depend>nebula_msgs</build_depend>
+  <build_depend>pandar_msgs</build_depend>
+  <build_depend>robosense_msgs</build_depend>
+  <build_depend>rosbag2_cpp</build_depend>
+  <build_depend>rosbag2_storage</build_depend>
+  <build_depend>velodyne_msgs</build_depend>
+  <build_depend>yaml-cpp</build_depend>
+  <exec_depend>libsqlite3-dev</exec_depend>
+  <exec_depend>mcap_vendor</exec_depend>
+  <exec_depend>nebula_msgs</exec_depend>
+  <exec_depend>pandar_msgs</exec_depend>
+  <exec_depend>robosense_msgs</exec_depend>
+  <exec_depend>rosbag2_cpp</exec_depend>
+  <exec_depend>rosbag2_storage</exec_depend>
+  <exec_depend>rosbag2_storage_mcap</exec_depend>
+  <exec_depend>velodyne_msgs</exec_depend>
+  <exec_depend>yaml-cpp</exec_depend>
 
   <!-- rosbag2_storage_mcap is a pluginlib runtime dependency for MCAP I/O.
-       Declared as test_depend (in addition to runtime) because CI's
-       "Remove exec_depend" step strips exec_depend declarations before
-       the test stage, which would leave the mcap storage plugin
-       unloadable for tests that read or write .mcap files. -->
-  <exec_depend>rosbag2_storage_mcap</exec_depend>
-
+       It is also declared as a test_depend because CI's "Remove exec_depend"
+       step strips exec_depend declarations before the test stage, which would
+       otherwise leave the mcap storage plugin unloadable for tests that read
+       or write .mcap files. -->
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
