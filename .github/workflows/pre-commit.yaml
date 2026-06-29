@@ -22,7 +22,7 @@ jobs:
           # Node.js 20 is needed for prettier / markdownlint-cli hooks.
           curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
           apt-get install -y --no-install-recommends nodejs
-          pip install pre-commit vcstool
+          pip install pre-commit
 
       - name: Check out repository
         uses: actions/checkout@v4
@@ -32,34 +32,6 @@ jobs:
       - name: Mark workspace as safe for git
         shell: bash
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Rewrite SSH GitHub URLs to HTTPS for vcs import
-        # build_depends.repos references tier4/nebula via git@github.com:
-        # which would require SSH agent + key. The Nebula repo is public,
-        # so transparently rewrite the URL to HTTPS for this container.
-        shell: bash
-        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
-
-      - name: Initialise rosdep
-        # ros:humble-ros-base ships rosdep but does not pre-populate its
-        # cache, so the first `rosdep install` invoked by ./setup.sh
-        # otherwise fails with "your rosdep installation has not been
-        # initialized yet". The container image already ran `rosdep init`,
-        # so only `rosdep update` is required here.
-        shell: bash
-        run: rosdep update --rosdistro humble
-
-      - name: Install workspace dependencies
-        shell: bash
-        run: |
-          source /opt/ros/humble/setup.bash
-          ./setup.sh
-
-      - name: Build (generates compile_commands.json for clang-tidy)
-        shell: bash
-        run: |
-          source /opt/ros/humble/setup.bash
-          ./build.sh --build-type release
 
       - name: Run pre-commit
         shell: bash

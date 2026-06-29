@@ -262,10 +262,10 @@ colcon build \
 
 # Aggregate per-package compile_commands.json files into a single
 # build/compile_commands.json. colcon writes one file per package
-# (build/<pkg>/compile_commands.json); merging them lets tools that
-# expect a single workspace-level compilation database -- notably the
-# clang-tidy pre-commit hook, which is invoked with `-p=build` -- find
-# entries for every translation unit in the workspace.
+# (build/<pkg>/compile_commands.json); merging them lets editors and
+# language servers (clangd, IDEs) that expect a single workspace-level
+# compilation database find entries for every translation unit in the
+# workspace.
 merge_compile_commands() {
     local build_root="${SCRIPT_DIR}/build"
     local merged="${build_root}/compile_commands.json"
