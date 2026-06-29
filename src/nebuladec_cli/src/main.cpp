@@ -63,8 +63,6 @@ std::string identity_model(const std::optional<nebuladec::Identity> & id)
   std::ostringstream os;
   if (id->model != nebula::drivers::SensorModel::UNKNOWN) {
     os << id->model;
-  } else if (id->seyond_model) {
-    os << *id->seyond_model;
   } else {
     return "<unknown>";
   }

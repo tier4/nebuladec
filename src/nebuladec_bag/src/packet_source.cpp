@@ -162,8 +162,8 @@ Vendor vendor_from_message_type(const std::string & type_name)
   if (type_name == k_robosense_scan) {
     return Vendor::ROBOSENSE;
   }
-  // nebula_msgs/NebulaPackets is shared between Seyond LiDAR and
-  // Continental radar: only a packet-level sniff can decide.
+  // nebula_msgs/NebulaPackets is a generic container (e.g. Continental
+  // radar): only a packet-level sniff can decide the vendor.
   return Vendor::UNKNOWN;
 }
 

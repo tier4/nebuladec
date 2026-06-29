@@ -27,7 +27,6 @@ namespace
 
 using nebula::drivers::ReturnMode;
 using nebula::drivers::SensorModel;
-using nebula::drivers::SeyondSensorModel;
 
 constexpr std::size_t k_velodyne_packet_size = 1206;
 constexpr std::size_t k_velodyne_return_mode_offset = 1204;
@@ -47,13 +46,6 @@ bool has_hesai_sop(const std::uint8_t * data, std::size_t size)
 bool has_velodyne_block_magic(const std::uint8_t * data, std::size_t size)
 {
   return size >= 2 && data[0] == 0xFF && data[1] == 0xEE;
-}
-
-// Seyond SeyondPacketCommon.magic_number is a uint16 with value 0x176A.
-// On a little-endian host this is the byte pair {0x6A, 0x17}.
-bool has_seyond_magic(const std::uint8_t * data, std::size_t size)
-{
-  return size >= 2 && data[0] == 0x6A && data[1] == 0x17;
 }
 
 bool has_robosense_bpearl_v3_magic(const std::uint8_t * data, std::size_t size)
@@ -195,62 +187,6 @@ ReturnMode velodyne_return_mode_from_byte(std::uint8_t return_byte)
   }
 }
 
-// Maps the `lidar_type` byte in SeyondPacketCommon (offset 15) to a
-// SeyondSensorModel. Values come from the official inno-lidar-sdk enum
-// `InnoLidarType` in src/sdk_common/inno_lidar_packet.h:
-//   0=FALCON(K1)  1=ROBINW  2=ROBINE  3=FALCONII_DOT_1/K2  4=FALCONIII
-//   5=ROBINELITE(=Robin-E1X)  6=ROBINE2X  7=HB(Hummingbird)  8=ROBINE2
-// Nebula's SeyondSensorModel only covers FalconK, RobinW, RobinE1X and
-// HummingbirdD1; values outside that set return UNKNOWN.
-SeyondSensorModel seyond_model_from_lidar_type(std::uint8_t lidar_type)
-{
-  switch (lidar_type) {
-    case 0:  // FalconK1
-    case 3:  // FalconII.1 / FalconK2
-    case 4:  // FalconIII
-      return SeyondSensorModel::FALCON_K;
-    case 1:  // RobinW
-      return SeyondSensorModel::ROBIN_W;
-    case 5:  // RobinELITE (Robin-E1X)
-      return SeyondSensorModel::ROBIN_E1X;
-    case 7:  // HB (Hummingbird)
-      return SeyondSensorModel::HUMMINGBIRD_D1;
-    default:
-      return SeyondSensorModel::UNKNOWN;
-  }
-}
-
-// Is the given `type:8` byte in SeyondDataPacket (offset 38, lower 8 bits
-// of the packed `type:8 | item_number:24` uint32) one of Nebula's known
-// data-packet item types?
-//
-// Values mirror the constants Nebula's seyond_decoder uses internally
-// (see nebula_seyond_decoders/src/seyond_decoder.cpp, ~line 85):
-//   1  = sphere_pointcloud
-//   5  = robine_sphere_pointcloud
-//   7  = robinw_sphere_pointcloud
-//   13 = robinw_compact_pointcloud
-//   19 = robine2x_compact_pointcloud
-//   22 = hummingbird_compact_pointcloud
-// Anything else is a status / message / log / coincidence: real sensors
-// emit those frames with `lidar_type=0` (FalconK) regardless of the
-// actual device, so accepting them into the sniff flow misidentifies
-// RobinW / Hummingbird streams as FalconK.
-bool is_seyond_data_item_type(std::uint8_t item_type)
-{
-  switch (item_type) {
-    case 1:
-    case 5:
-    case 7:
-    case 13:
-    case 19:
-    case 22:
-      return true;
-    default:
-      return false;
-  }
-}
-
 std::optional<Identity> sniff_hesai(const std::uint8_t * data, std::size_t size)
 {
   // Hesai — SOP 0xEEFF with variable size; Header12B starts at offset 0.
@@ -311,49 +247,6 @@ std::optional<Identity> sniff_robosense(const std::uint8_t * data, std::size_t s
     return id;
   }
   return std::nullopt;
-}
-
-std::optional<Identity> sniff_seyond(const std::uint8_t * data, std::size_t size)
-{
-  // Seyond packet identification is a two-step process:
-  //
-  //   1) Reject non-data packets. Every Seyond UDP frame -- data, status,
-  //      message, log -- shares the 0x176A magic and a SeyondPacketCommon
-  //      header. Real sensors have been observed emitting status frames
-  //      with `lidar_type=0` (FalconK) regardless of the actual device,
-  //      so identifying models off a raw magic hit misclassifies RobinW
-  //      / Hummingbird streams as FalconK. The `type:8` byte at offset
-  //      38 of SeyondDataPacket distinguishes data frames from the rest.
-  //   2) Read `lidar_type` at offset 15 of SeyondPacketCommon to resolve
-  //      the sub-model. We keep using this field (not item_type) because
-  //      its enum is wider -- e.g. RobinELITE (=Robin-E1X) corresponds
-  //      to lidar_type=5 but has no dedicated item_type in Nebula.
-  //
-  // Layout: SeyondPacketCommon (26 B) + idx (8) + sub_idx (2) + sub_seq
-  // (2) + packed `type:8 | item_number:24` (4) -> `type` at offset 38.
-  constexpr std::size_t k_seyond_lidar_type_offset = 15;
-  constexpr std::size_t k_seyond_item_type_offset = 38;
-  constexpr std::size_t k_seyond_min_size = k_seyond_item_type_offset + 1;
-  if (!has_seyond_magic(data, size) || size < k_seyond_min_size) {
-    return std::nullopt;
-  }
-  if (!is_seyond_data_item_type(data[k_seyond_item_type_offset])) {
-    // Status / message / log / coincidental-magic frame. Returning
-    // nullopt lets the caller keep any previously resolved Seyond
-    // identity and wait for a real data packet from the stream.
-    return std::nullopt;
-  }
-  const SeyondSensorModel seyond_model =
-    seyond_model_from_lidar_type(data[k_seyond_lidar_type_offset]);
-  Identity id;
-  id.vendor = Vendor::SEYOND;
-  id.model = SensorModel::UNKNOWN;  // Seyond uses a separate enum.
-  id.return_mode = ReturnMode::UNKNOWN;
-  if (seyond_model != SeyondSensorModel::UNKNOWN) {
-    id.seyond_model = seyond_model;
-  }
-  id.confidence = 0.9F;
-  return id;
 }
 
 // --- Continental radar (no cloud decoding; identification only) ----------
@@ -489,8 +382,6 @@ std::optional<Identity> PacketSniffer::identify(
       return with_hint_fallback(Vendor::VELODYNE, sniff_velodyne(data, size));
     case Vendor::ROBOSENSE:
       return with_hint_fallback(Vendor::ROBOSENSE, sniff_robosense(data, size));
-    case Vendor::SEYOND:
-      return with_hint_fallback(Vendor::SEYOND, sniff_seyond(data, size));
     case Vendor::CONTINENTAL:
       return with_hint_fallback(Vendor::CONTINENTAL, sniff_continental(data, size));
     case Vendor::UNKNOWN:
@@ -501,9 +392,6 @@ std::optional<Identity> PacketSniffer::identify(
   // No hint — try every detector. Order matters only where packet prefixes
   // overlap (Velodyne vs Hesai share the 0xFFEE SOP; disambiguated by
   // packet size inside sniff_velodyne).
-  if (auto seyond = sniff_seyond(data, size); seyond) {
-    return seyond;
-  }
   if (auto velodyne = sniff_velodyne(data, size); velodyne) {
     return velodyne;
   }
@@ -528,8 +416,6 @@ std::string to_string(Vendor vendor)
       return "velodyne";
     case Vendor::ROBOSENSE:
       return "robosense";
-    case Vendor::SEYOND:
-      return "seyond";
     case Vendor::CONTINENTAL:
       return "continental";
     case Vendor::UNKNOWN:

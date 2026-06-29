@@ -207,8 +207,7 @@ void feed_packet(
       // on what we already have (unknown -> resolved model). Prevents
       // later garbage packets from wiping out a confirmed match.
       const bool first = !state.sniffed_identity.has_value();
-      const bool resolved_model =
-        id->model != nebula::drivers::SensorModel::UNKNOWN || id->seyond_model.has_value();
+      const bool resolved_model = id->model != nebula::drivers::SensorModel::UNKNOWN;
       if (
         first || (resolved_model &&
                   state.sniffed_identity->model == nebula::drivers::SensorModel::UNKNOWN)) {
@@ -1499,10 +1498,8 @@ private:
     // The hand-off must not alias storage the driver will mutate
     // later: some upstream nebula decoders (e.g. Velodyne's scan
     // decoder) reuse the same `NebulaPointCloud` object across scans
-    // via `clear()` / `push_back()`. Seyond's decoder swaps in a
-    // fresh `make_shared` after each emit, so for that vendor any
-    // hand-off would be safe -- but `swap` works uniformly and gives
-    // both vendors the same O(1) hand-off cost.
+    // via `clear()` / `push_back()`. `swap` works uniformly across
+    // vendors and gives an O(1) hand-off cost.
     //
     // After `swap`, the driver's pointer aliases an empty container
     // (size=0, capacity=0) and our snapshot owns the points. The

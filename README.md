@@ -22,7 +22,6 @@ workspace adds a thin layer that makes those drivers easy to use in a
 | --------------------------------------------------------------------------- | --------------------- | -------------------- |
 | Hesai (Pandar40P / 64 / QT64 / XT16 / XT32 / XT32M / QT128 / AT128 / OT128) | ✓                     | ✓                    |
 | Velodyne (VLP16 / VLP32 / HDL32 / VLS128)                                   | ✓                     | ✓                    |
-| Seyond (FalconK1 / K2 / III, RobinW / E1X, HummingbirdD1)                   | ✓                     | ✓                    |
 | Robosense (Bpearl V3, Helios)                                               | ✓                     | ✗ (passthrough only) |
 | Continental (ARS548, SRR520)                                                | ✓                     | ✗ (passthrough only) |
 
@@ -136,7 +135,7 @@ nebuladec convert path/to/input.mcap -o path/to/output.mcap -c config/x2.yaml --
 nebuladec convert path/to/input.mcap -o path/to/output.mcap -c config/x2.yaml --mcap-compression none
 ```
 
-See [`nebuladec_cli/README.md`](src/nebuladec_cli/README.md#mcap-tuning) for the full `--mcap-compression` / `--mcap-chunk-size` matrix and a benchmark on a 2.5 GB Seyond bag.
+See [`nebuladec_cli/README.md`](src/nebuladec_cli/README.md#mcap-tuning) for the full `--mcap-compression` / `--mcap-chunk-size` matrix and a benchmark on a 2.5 GB bag.
 
 ### Mapping YAML
 

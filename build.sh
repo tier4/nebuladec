@@ -32,7 +32,7 @@ Options:
                            every package, including the bundled nebula
                            decoders. Produces a non-portable binary tied to
                            this host's CPU in exchange for letting the
-                           Seyond/Hesai/Velodyne unpack hot paths use the
+                           Hesai/Velodyne unpack hot paths use the
                            full instruction set (AVX2/AVX-512/BMI2/...).
                            Ignored on debug.
       --unroll             Append -funroll-loops to release compile flags

@@ -15,7 +15,6 @@
 #include "nebuladec_adapters/decoder.hpp"
 
 #include "nebuladec_adapters/hesai_adapter.hpp"
-#include "nebuladec_adapters/seyond_adapter.hpp"
 #include "nebuladec_adapters/velodyne_adapter.hpp"
 
 #include <nebuladec_core/any_decoder.hpp>
@@ -34,8 +33,6 @@ namespace nebuladec
 std::unique_ptr<AnyDecoder> make_adapter(const Identity & identity)
 {
   switch (identity.vendor) {
-    case Vendor::SEYOND:
-      return std::make_unique<adapters::SeyondAdapter>(identity);
     case Vendor::HESAI: {
       auto adapter = std::make_unique<adapters::HesaiAdapter>(identity);
       if (!adapter->is_ready()) {
@@ -105,8 +102,7 @@ std::optional<nebula::drivers::NebulaPointCloudPtr> Decoder::feed(
     // a ready adapter or a resolved model keeps the search alive for
     // LiDAR while still terminating it for vendors that are only
     // identified (CONTINENTAL radar, ROBOSENSE).
-    const bool has_model =
-      sniffed->model != nebula::drivers::SensorModel::UNKNOWN || sniffed->seyond_model.has_value();
+    const bool has_model = sniffed->model != nebula::drivers::SensorModel::UNKNOWN;
     if (
       impl_->adapter || sniffed->vendor == Vendor::CONTINENTAL ||
       sniffed->vendor == Vendor::ROBOSENSE || has_model) {

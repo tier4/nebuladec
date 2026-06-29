@@ -28,15 +28,12 @@ namespace
 {
 
 using nebula::drivers::SensorModel;
-using nebula::drivers::SeyondSensorModel;
 
 std::string format_model(const Identity & id)
 {
   std::ostringstream os;
   if (id.model != SensorModel::UNKNOWN) {
     os << id.model;
-  } else if (id.seyond_model && *id.seyond_model != SeyondSensorModel::UNKNOWN) {
-    os << *id.seyond_model;
   } else {
     os << "unknown";
   }
@@ -71,8 +68,7 @@ SupportRegistry::SupportRegistry()
        SensorModel::HESAI_PANDARQT128,
        SensorModel::HESAI_PANDARAT128,
        SensorModel::HESAI_PANDAR128_E4X,
-     },
-     {}});
+     }});
   vendors_.push_back(
     {Vendor::VELODYNE,
      {
@@ -80,16 +76,6 @@ SupportRegistry::SupportRegistry()
        SensorModel::VELODYNE_VLP16,
        SensorModel::VELODYNE_VLP32,
        SensorModel::VELODYNE_VLS128,
-     },
-     {}});
-  vendors_.push_back(
-    {Vendor::SEYOND,
-     {},
-     {
-       SeyondSensorModel::FALCON_K,
-       SeyondSensorModel::ROBIN_W,
-       SeyondSensorModel::ROBIN_E1X,
-       SeyondSensorModel::HUMMINGBIRD_D1,
      }});
 
   // Derive the supported-vendor quick list.
@@ -110,14 +96,6 @@ bool SupportRegistry::is_model_supported(const Identity & identity) const
   for (const auto & vs : vendors_) {
     if (vs.vendor != identity.vendor) {
       continue;
-    }
-    // Seyond is the only vendor with a side-enum for sub-models.
-    if (identity.vendor == Vendor::SEYOND) {
-      if (!identity.seyond_model) {
-        return false;
-      }
-      return std::find(vs.seyond_models.begin(), vs.seyond_models.end(), *identity.seyond_model) !=
-             vs.seyond_models.end();
     }
     return std::find(vs.sensor_models.begin(), vs.sensor_models.end(), identity.model) !=
            vs.sensor_models.end();

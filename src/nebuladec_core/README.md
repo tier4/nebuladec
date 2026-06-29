@@ -17,7 +17,7 @@ any Nebula decoders — point-cloud reconstruction belongs to
 
 | Header                 | Purpose                                                                                                                                                                                                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `identity.hpp`         | The `Vendor` enum (HESAI / VELODYNE / ROBOSENSE / SEYOND / CONTINENTAL) and the `Identity` struct that carries the identification result (vendor, `SensorModel`, `ReturnMode`, optional `SeyondSensorModel`, confidence). Also declares `to_string(Vendor)`. |
+| `identity.hpp`         | The `Vendor` enum (HESAI / VELODYNE / ROBOSENSE / CONTINENTAL) and the `Identity` struct that carries the identification result (vendor, `SensorModel`, `ReturnMode`, confidence). Also declares `to_string(Vendor)`. |
 | `any_decoder.hpp`      | The pure-virtual `AnyDecoder` interface: `feed()` (raw bytes → optional point cloud) and `flush()` (drain the trailing scan). Implementations live in `nebuladec_adapters`.                                                                                  |
 | `packet_sniffer.hpp`   | The stateless `PacketSniffer::identify(data, size, vendor_hint)`. Infers vendor, model, and return mode from a single packet.                                                                                                                                |
 | `support_registry.hpp` | The Meyers singleton `SupportRegistry`: `check()`, `is_vendor_supported()`, `is_model_supported()`, `supported_vendors()`. Defines the `SupportLevel` enum and `SupportDecision`.                                                                            |
@@ -25,15 +25,15 @@ any Nebula decoders — point-cloud reconstruction belongs to
 
 ## Implementation (`src/`)
 
-- `packet_sniffer.cpp` — Per-vendor sniff routines (Hesai SOP, Velodyne block magic + fixed size, the Robosense 4/8-byte magic, Seyond magic + data-item-type, the Continental ARS548/SRR520 header + size pairs).
-- `support_registry.cpp` — Hardcoded registry entries for HESAI (9 models), VELODYNE (4 models), and SEYOND (4 models). ROBOSENSE and CONTINENTAL are identified by the sniffer but intentionally absent — there is no PointCloud2 adapter for them.
+- `packet_sniffer.cpp` — Per-vendor sniff routines (Hesai SOP, Velodyne block magic + fixed size, the Robosense 4/8-byte magic, the Continental ARS548/SRR520 header + size pairs).
+- `support_registry.cpp` — Hardcoded registry entries for HESAI (9 models) and VELODYNE (4 models). ROBOSENSE and CONTINENTAL are identified by the sniffer but intentionally absent — there is no PointCloud2 adapter for them.
 - `topic_mapping.cpp` — YAML parsing, template tokenization, regex compilation for `<name>` placeholders (with backreferences for repeated placeholder names and prefix preservation for relative rules), and ambiguous-rule detection.
 - `profiling.cpp` — Implementation of the opt-in micro-profiler declared in `profiling.hpp`. Compiled in but inert unless `NEBULADEC_PROFILE=1` is defined; see _Profiling_ below.
 
 ## Tests (`test/`)
 
-- `test_packet_sniffer.cpp` — Identification of every supported model (Hesai / Velodyne / Robosense / Seyond / Continental), rejection of empty / corrupt / undersized / size-mismatched packets, Seyond status-packet filtering, and `vendor_hint` restriction.
-- `test_support_registry.cpp` — Asserts that only HESAI / VELODYNE / SEYOND are supported, every `SupportLevel` return is correct, and `supported_vendors()` has the expected size.
+- `test_packet_sniffer.cpp` — Identification of every supported model (Hesai / Velodyne / Robosense / Continental), rejection of empty / corrupt / undersized / size-mismatched packets, and `vendor_hint` restriction.
+- `test_support_registry.cpp` — Asserts that only HESAI / VELODYNE are supported, every `SupportLevel` return is correct, and `supported_vendors()` has the expected size.
 - `test_topic_mapping.cpp` — Parsing of absolute and relative rules, error paths (missing fields, invalid placeholders, mixing absolute and relative rules), resolution logic, ambiguity raising, and `nullopt` on no-match.
 
 Cross-package concurrent-use stress tests live in
@@ -45,7 +45,7 @@ the thread-safety contracts documented on `PacketSniffer`,
 
 `package.xml`:
 
-- `depend`: `nebula_core_common`, `nebula_seyond_common`, `yaml_cpp_vendor`
+- `depend`: `nebula_core_common`, `yaml_cpp_vendor`
 - `buildtool_depend`: `ament_cmake_auto`
 - `test_depend`: `ament_cmake_gtest`, `ament_lint_auto`, `ament_lint_common`
 
@@ -82,8 +82,7 @@ scopes:
 - `decoder_feed_total`, `decoder_feed_sniff` (in `Decoder::feed`)
 - `<vendor>_adapter_feed_total` and the wrapped upstream driver call
   (`hesai_driver_parse_cloud_packet`,
-  `velodyne_driver_parse_cloud_packet`, `seyond_decoder_unpack`) per
-  adapter
+  `velodyne_driver_parse_cloud_packet`) per adapter
 
 ament does not propagate `target_compile_definitions PUBLIC` across
 packages, so `nebuladec_adapters` independently honours the same

@@ -40,7 +40,7 @@ namespace nebuladec
 /// the sniffer restricts itself to that vendor's detectors and never
 /// returns a different vendor. `Vendor::UNKNOWN` (the default) runs every
 /// detector and is used for the generic `nebula_msgs/NebulaPackets`
-/// container, which today carries both Seyond LiDAR and Continental radar.
+/// container, which today carries Continental radar.
 class PacketSniffer
 {
 public:

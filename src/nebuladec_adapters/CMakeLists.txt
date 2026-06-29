@@ -17,8 +17,6 @@ ament_auto_find_build_dependencies()
 ament_auto_add_library(${PROJECT_NAME} SHARED
   src/decoder.cpp
   src/hesai_adapter.cpp
-  src/seyond_adapter.cpp
-  src/seyond_decoder.cpp
   src/velodyne_adapter.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -57,9 +55,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_decoder_concurrency test/test_decoder_concurrency.cpp)
   target_link_libraries(test_decoder_concurrency ${PROJECT_NAME})
-
-  ament_add_gtest(test_seyond_decoder test/test_seyond_decoder.cpp)
-  target_link_libraries(test_seyond_decoder ${PROJECT_NAME})
 endif()
 
 ament_auto_package()

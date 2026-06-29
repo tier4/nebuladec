@@ -60,9 +60,9 @@ bool is_packet_type(const std::string & type_name);
 ///
 /// The vendor of `pandar_msgs/PandarScan`, `velodyne_msgs/VelodyneScan`
 /// and `robosense_msgs/RobosenseScan` is known from the message type
-/// alone. `nebula_msgs/NebulaPackets` is a generic container used by
-/// Seyond LiDAR AND Continental radar, so it returns `Vendor::UNKNOWN`
-/// and the caller must disambiguate by sniffing the packet payload.
+/// alone. `nebula_msgs/NebulaPackets` is a generic container (e.g.
+/// Continental radar), so it returns `Vendor::UNKNOWN` and the caller
+/// must disambiguate by sniffing the packet payload.
 /// Any other / non-packet type returns `Vendor::UNKNOWN`.
 Vendor vendor_from_message_type(const std::string & type_name);
 
