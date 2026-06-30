@@ -125,3 +125,13 @@ clean = "rm -rf build install log"
 # Convenience passthrough: `pixi run -e jazzy nebuladec convert in -o out ...`.
 # Requires a prior `build`; the overlay is auto-sourced on activation.
 nebuladec = "nebuladec"
+
+# Install a `nebuladec` launcher on PATH (default ~/.local/bin) for the selected
+# environment, so the built binary runs as plain `nebuladec ...` without the
+# `pixi run -e <env> nebuladec` prefix. Depends on `build` so the binary exists,
+# then caches the env activation for fast startup. Run as
+# `pixi run -e <env> install`; re-run to switch the active environment.
+install = { cmd = "bash scripts/install-launcher.sh", depends-on = ["build"] }
+
+# Remove the installed launcher and its activation cache.
+uninstall = "bash scripts/install-launcher.sh --uninstall"

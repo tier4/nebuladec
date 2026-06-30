@@ -107,6 +107,8 @@ Other tasks (each accepts `-e <distro>`):
 pixi run build-debug          # Debug build (CMAKE_BUILD_TYPE=Debug)
 pixi run import-deps          # fetch the external sources only
 pixi run clean                # remove build/ install/ log/
+pixi run -e <distro> install  # put a prefix-free `nebuladec` on PATH (see Running)
+pixi run uninstall            # remove that launcher
 ```
 
 ## Running
@@ -125,8 +127,30 @@ or invoke a single command without an interactive shell:
 pixi run -e humble nebuladec convert path/to/input_bag --dry-run
 ```
 
+### Installing a prefix-free `nebuladec` command
+
+To run `nebuladec` directly — from any directory, without the
+`pixi run -e <distro>` prefix — install a launcher for the distro you want:
+
+```bash
+pixi run -e humble install    # builds humble, then installs the launcher
+nebuladec convert path/to/input_bag --dry-run   # now works from anywhere
+```
+
+This builds the selected environment and writes a small launcher to
+`~/.local/bin/nebuladec` (override with `NEBULADEC_BIN_DIR`; make sure the
+directory is on your `PATH`). The launcher sources a cached activation snapshot
+and execs the binary directly, so it starts without `pixi`'s per-call overhead.
+The binary is **not** relocatable — the launcher re-establishes the conda/ROS
+environment on each call, so the project and its pixi environment must remain in
+place.
+
+`build/` and `install/` are a single shared colcon workspace, so the most
+recently installed (or built) distro is the active one. To switch, re-run
+`pixi run -e <distro> install`. Remove the launcher with `pixi run uninstall`.
+
 The examples below assume you are inside `pixi shell` (otherwise prefix each
-with `pixi run -e <distro>`):
+with `pixi run -e <distro>`, or install the launcher as shown above):
 
 ```bash
 # Inspect what packet topics exist in the bag
