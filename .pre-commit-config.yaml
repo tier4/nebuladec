@@ -12,9 +12,10 @@ ci:
   # only skipped on the hosted pre-commit.ci service.
   skip: [cppcheck]
 
-# Vendored third-party headers (e.g. tabulate single-header) are not
-# part of our style budget: let them keep upstream formatting.
-exclude: ^src/nebuladec_cli/include/third_party/
+# Vendored third-party sources (e.g. the tabulate single-header, the png++
+# headers and the glibc compat shim under third_party/) are not part of our
+# style budget: let them keep upstream formatting.
+exclude: ^(src/nebuladec_cli/include/third_party/|third_party/)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

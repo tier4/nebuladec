@@ -1,5 +1,9 @@
 {
-  "ignorePaths": [".cppcheck_suppressions", "src/nebuladec_cli/include/third_party/**"],
+  "ignorePaths": [
+    ".cppcheck_suppressions",
+    "src/nebuladec_cli/include/third_party/**",
+    "third_party/**"
+  ],
   "ignoreRegExpList": [],
   "words": [
     "backreferenced",
