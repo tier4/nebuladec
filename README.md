@@ -38,8 +38,10 @@ nebuladec/
 ├── config/                  # Example mapping YAMLs
 │   └── x2.yaml
 ├── build_depends.repos      # Pins for the external sources
-├── setup.sh                 # Runs vcs import + rosdep install
-└── build.sh                 # colcon build wrapper
+├── pixi.toml                # pixi manifest: ROS distros, dependencies, build tasks
+├── pixi.lock                # Locked, reproducible dependency set (committed)
+├── scripts/                 # Helper scripts invoked by the pixi tasks
+└── third_party/             # Vendored deps not packaged on conda (png++, compat shims)
 ```
 
 The package dependency stack is roughly **`cli` → `bag` → `adapters` → `core`**.
@@ -52,58 +54,105 @@ Per-package details:
 
 ## Requirements
 
-- ROS 2 (set `ROS_DISTRO`, e.g. Humble or Jazzy).
-- `vcs` (`python3-vcstool`).
-- `rosdep` (initialized with `sudo rosdep init && rosdep update`).
-- `colcon`.
-- A C++17 compiler.
-
-## Setup
+[pixi](https://pixi.sh) is the only prerequisite. It provisions ROS 2 (via
+[RoboStack](https://robostack.github.io/) conda packages), the C++ toolchain,
+`colcon`, and `vcs` into a project-local environment — no system ROS, `apt`, or
+`rosdep` setup is required.
 
 ```bash
-# Source ROS first
-source /opt/ros/${ROS_DISTRO}/setup.bash
-
-# Fetch external sources, then resolve ROS package dependencies
-./setup.sh
+curl -fsSL https://pixi.sh/install.sh | bash
 ```
 
-`setup.sh` does two things:
+The ROS distro is chosen per pixi environment. Two are available:
 
-1. Runs `vcs import` against `build_depends.repos` to fetch the pinned external sources (Nebula, sync_tooling_msgs, agnocast) into `src/dependencies/` (the directory is git-ignored and is recreated on every fresh checkout).
-2. Runs `rosdep install` across the whole workspace (the imported sources plus the in-tree packages).
+| Environment | ROS 2 distro | RoboStack channel             |
+| ----------- | ------------ | ----------------------------- |
+| `humble`    | Humble       | `prefix.dev/robostack-humble` |
+| `jazzy`     | Jazzy        | `prefix.dev/robostack-jazzy`  |
 
-## Build
+`humble` is the default environment (used when `-e` is omitted).
+
+> **ROS 2 Lyrical** is not provided yet: the RoboStack environment installs, but
+> Nebula's sources do not compile on Lyrical — Nebula uses the
+> `ament_target_dependencies` CMake macro that Lyrical's `ament_cmake` removed.
+> It will be added once Nebula supports Lyrical.
+
+## Setup & build
+
+Pick a distro and build. The first build for a distro downloads the RoboStack
+ROS environment (multi-GB) and imports the external sources; later builds are
+incremental.
 
 ```bash
-./build.sh                          # default: Release + Make + nproc/2 workers
-./build.sh -c                       # clean build (removes install/, build/, log/)
-./build.sh --build-type debug       # Debug
-./build.sh --build-type info        # RelWithDebInfo
-./build.sh --builder ninja          # use Ninja (must be installed)
-./build.sh -j 8                     # explicit parallelism
-./build.sh -h                       # show full usage
+pixi run -e humble build      # ROS 2 Humble (also the default environment)
+pixi run -e jazzy build       # ROS 2 Jazzy
+
+pixi run build                # no -e: uses the default environment (Humble)
 ```
 
-`build.sh` requires `ROS_DISTRO` to be set, so
-`source /opt/ros/${ROS_DISTRO}/setup.bash` before running it.
+Each `build` runs two steps in order:
 
-Under the hood it runs
-`colcon build --symlink-install --packages-up-to nebuladec_cli` and afterwards
-merges the per-package `compile_commands.json` files into a single
-`build/compile_commands.json` — editors and language servers (clangd, IDEs)
-expect a single workspace-level compilation database.
+1. `import-deps` — `vcs import` against `build_depends.repos` to fetch the
+   pinned external sources (Nebula, sync_tooling_msgs, agnocast) into
+   `src/dependencies/` (git-ignored, recreated on every fresh checkout).
+2. `colcon build --symlink-install --packages-up-to nebuladec_cli` inside the
+   selected ROS environment, then merges the per-package
+   `compile_commands.json` files into a single `build/compile_commands.json` —
+   editors and language servers (clangd, IDEs) expect a single workspace-level
+   compilation database.
 
-After a `-c` clean build, the script automatically strips stale
-`${WORKSPACE}/install/...` entries from `AMENT_PREFIX_PATH`,
-`CMAKE_PREFIX_PATH`, and `COLCON_PREFIX_PATH`, so a previously sourced
-`install/setup.bash` does not leave colcon warning about missing paths.
+Other tasks (each accepts `-e <distro>`):
+
+```bash
+pixi run build-debug          # Debug build (CMAKE_BUILD_TYPE=Debug)
+pixi run import-deps          # fetch the external sources only
+pixi run clean                # remove build/ install/ log/
+pixi run -e <distro> install  # put a prefix-free `nebuladec` on PATH (see Running)
+pixi run uninstall            # remove that launcher
+```
 
 ## Running
 
-```bash
-source install/setup.bash
+After a build, run `nebuladec` inside the matching pixi environment. Either drop
+into a shell that already has ROS and the freshly built binary on `PATH`:
 
+```bash
+pixi shell -e humble
+nebuladec convert path/to/input_bag --dry-run
+```
+
+or invoke a single command without an interactive shell:
+
+```bash
+pixi run -e humble nebuladec convert path/to/input_bag --dry-run
+```
+
+### Installing a prefix-free `nebuladec` command
+
+To run `nebuladec` directly — from any directory, without the
+`pixi run -e <distro>` prefix — install a launcher for the distro you want:
+
+```bash
+pixi run -e humble install    # builds humble, then installs the launcher
+nebuladec convert path/to/input_bag --dry-run   # now works from anywhere
+```
+
+This builds the selected environment and writes a small launcher to
+`~/.local/bin/nebuladec` (override with `NEBULADEC_BIN_DIR`; make sure the
+directory is on your `PATH`). The launcher sources a cached activation snapshot
+and execs the binary directly, so it starts without `pixi`'s per-call overhead.
+The binary is **not** relocatable — the launcher re-establishes the conda/ROS
+environment on each call, so the project and its pixi environment must remain in
+place.
+
+`build/` and `install/` are a single shared colcon workspace, so the most
+recently installed (or built) distro is the active one. To switch, re-run
+`pixi run -e <distro> install`. Remove the launcher with `pixi run uninstall`.
+
+The examples below assume you are inside `pixi shell` (otherwise prefix each
+with `pixi run -e <distro>`, or install the launcher as shown above):
+
+```bash
 # Inspect what packet topics exist in the bag
 nebuladec convert path/to/input_bag --dry-run
 
@@ -155,9 +204,13 @@ within a pattern acts as a backreference. The full schema is documented in
 ## Tests
 
 ```bash
-colcon test --packages-up-to nebuladec_cli
-colcon test-result --verbose
+pixi run -e humble test       # build (if needed) + colcon test + results
 ```
+
+`test` first builds the product (via `build`), then builds and runs the tests
+for the four in-tree `nebuladec_*` packages (`colcon test` + `colcon
+test-result --verbose`). Nebula's own test suites are not built (they do not
+compile under the conda toolchain). Use `-e jazzy` to test against Jazzy.
 
 Some `nebuladec_bag` regression tests (Hesai QT128 and Velodyne VLP16) only
 register when the corresponding Nebula-provided golden bag is present under
@@ -166,5 +219,6 @@ register when the corresponding Nebula-provided golden bag is present under
 ## License
 
 See [`LICENSE`](LICENSE) for the license of this repository. The bundled
-external sources (CLI11, tabulate, and the repositories under
+external sources (CLI11, tabulate, the vendored png++ headers under
+[`third_party/pngpp/`](third_party/pngpp/README.md), and the repositories under
 `src/dependencies/`) each carry their own licenses.

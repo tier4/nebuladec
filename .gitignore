@@ -11,6 +11,9 @@ build/
 install/
 log/
 
+# pixi (per-environment package cache; pixi.lock is committed)
+/.pixi/
+
 # Python
 *.pyc
 

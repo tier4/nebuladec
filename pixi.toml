@@ -1,0 +1,137 @@
+[workspace]
+name = "nebuladec"
+version = "0.0.0"
+description = "Nebula-based offline LiDAR packet decoder for ROS 2 bags"
+authors = ["TIER IV <opensource@tier4.jp>"]
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64"]
+
+# ---------------------------------------------------------------------------
+# Shared build tooling (conda-forge), common to every ROS distro. ROS itself
+# is pulled in per-distro from the RoboStack channels below; everything here is
+# distro-independent.
+# ---------------------------------------------------------------------------
+[dependencies]
+python = ">=3.11"
+colcon-common-extensions = "*"
+vcstool = "*"
+cmake = ">=3.22"
+ninja = "*"
+pkg-config = "*"
+cxx-compiler = "*"
+c-compiler = "*"
+git = "*"
+# Used directly by the nebuladec sources (not via a ROS vendor package).
+yaml-cpp = "*"
+sqlite = "*"
+
+# ---------------------------------------------------------------------------
+# Per-distro features. Each adds its own RoboStack channel and the ROS packages
+# this workspace needs. `ros-<distro>-desktop` is a deliberately broad base so
+# Nebula's sprawling dependency tree resolves; the rosbag2 / mcap extras cover
+# this repo's direct package.xml dependencies (rosbag2_cpp, rosbag2_storage,
+# rosbag2_storage_mcap, mcap_vendor). velodyne-msgs and autoware-cmake are
+# transitive dependencies of Nebula that are not bundled in the Nebula sources
+# (in the old rosdep flow they came from apt): autoware-cmake is the build-tool
+# 29 Nebula packages use, and velodyne-msgs backs Nebula's velodyne decoders.
+# Both are pulled from RoboStack here.
+# ---------------------------------------------------------------------------
+[feature.humble]
+channels = ["https://prefix.dev/robostack-humble"]
+[feature.humble.dependencies]
+ros-humble-desktop = "*"
+ros-humble-rosbag2 = "*"
+ros-humble-rosbag2-storage-mcap = "*"
+ros-humble-mcap-vendor = "*"
+ros-humble-velodyne-msgs = "*"
+ros-humble-autoware-cmake = "*"
+
+[feature.jazzy]
+channels = ["https://prefix.dev/robostack-jazzy"]
+[feature.jazzy.dependencies]
+ros-jazzy-desktop = "*"
+ros-jazzy-rosbag2 = "*"
+ros-jazzy-rosbag2-storage-mcap = "*"
+ros-jazzy-mcap-vendor = "*"
+ros-jazzy-velodyne-msgs = "*"
+ros-jazzy-autoware-cmake = "*"
+
+# ROS 2 Lyrical is intentionally omitted for now: its RoboStack channel resolves
+# and installs fine, but Nebula's sources do not compile on Lyrical yet — Nebula
+# uses the ament_target_dependencies() CMake macro that Lyrical's ament_cmake has
+# removed. Re-add a [feature.lyrical] block (channel
+# https://prefix.dev/robostack-lyrical, same package set as above) and the
+# matching environment once Nebula supports Lyrical.
+
+# ---------------------------------------------------------------------------
+# One environment per distro. `default` maps to humble. Select another with
+# `pixi run -e jazzy <task>` / `pixi shell -e jazzy`.
+# ---------------------------------------------------------------------------
+[environments]
+default = { features = ["humble"] }
+humble = { features = ["humble"] }
+jazzy = { features = ["jazzy"] }
+
+# ---------------------------------------------------------------------------
+# On activation: (1) layer this workspace's colcon overlay (install/setup.sh) on
+# top of the RoboStack ROS environment when it exists, so the freshly built
+# `nebuladec` binary and its libraries are on PATH inside `pixi shell` / runs;
+# (2) apply the compile-time shims (vendored png++ headers and the M_PIf
+# constant) that let Nebula build under the conda / RoboStack toolchain.
+# ---------------------------------------------------------------------------
+[activation]
+scripts = [
+  "scripts/pixi-activate-overlay.sh",
+  "scripts/pixi-activate-build-compat.sh",
+]
+
+# ---------------------------------------------------------------------------
+# Tasks. They are distro-independent: the selected environment auto-sources the
+# matching RoboStack ROS, so the same `build` / `test` work for every distro.
+# ---------------------------------------------------------------------------
+[tasks]
+# Fetch the pinned external sources (Nebula, sync_tooling_msgs, agnocast) into
+# src/dependencies/ (git-ignored, recreated on every fresh checkout).
+import-deps = { cmd = "vcs import --recursive src < build_depends.repos", inputs = [
+  "build_depends.repos",
+] }
+
+# Release build of nebuladec_cli and its dependencies, then merge the
+# per-package compile_commands.json into a single build/compile_commands.json.
+# BUILD_TESTING=OFF builds only the product: Nebula's own test suites do not
+# compile under the conda toolchain (e.g. the conda sysroot lacks GNU float math
+# macros like M_PIf), and they are not our concern here. nebuladec's own tests
+# are built and run by the `test` task below.
+build = { cmd = "colcon build --symlink-install --packages-up-to nebuladec_cli --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=OFF && bash scripts/merge-compile-commands.sh", depends-on = [
+  "import-deps",
+] }
+
+# Debug build (same target set, CMAKE_BUILD_TYPE=Debug).
+build-debug = { cmd = "colcon build --symlink-install --packages-up-to nebuladec_cli --cmake-args -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=OFF && bash scripts/merge-compile-commands.sh", depends-on = [
+  "import-deps",
+] }
+
+# Build (via the `build` dependency) the full product with tests off, then
+# rebuild only the in-tree nebuladec packages with tests on and run them. This
+# scopes test compilation to our packages and avoids Nebula's conda-incompatible
+# test suites.
+test = { cmd = "colcon build --symlink-install --packages-select nebuladec_core nebuladec_adapters nebuladec_bag nebuladec_cli --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=ON && colcon test --packages-select nebuladec_core nebuladec_adapters nebuladec_bag nebuladec_cli --event-handlers console_direct+ && colcon test-result --verbose", depends-on = [
+  "build",
+] }
+
+# Remove colcon outputs for a clean rebuild.
+clean = "rm -rf build install log"
+
+# Convenience passthrough: `pixi run -e jazzy nebuladec convert in -o out ...`.
+# Requires a prior `build`; the overlay is auto-sourced on activation.
+nebuladec = "nebuladec"
+
+# Install a `nebuladec` launcher on PATH (default ~/.local/bin) for the selected
+# environment, so the built binary runs as plain `nebuladec ...` without the
+# `pixi run -e <env> nebuladec` prefix. Depends on `build` so the binary exists,
+# then caches the env activation for fast startup. Run as
+# `pixi run -e <env> install`; re-run to switch the active environment.
+install = { cmd = "bash scripts/install-launcher.sh", depends-on = ["build"] }
+
+# Remove the installed launcher and its activation cache.
+uninstall = "bash scripts/install-launcher.sh --uninstall"
